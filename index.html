@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>First Impression Engine — FIE-01</title>
+<meta name="description" content="A local, in-browser audit of how a photo presents. Scores the photo, never the person.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='white'/%3E%3Crect x='1.5' y='1.5' width='13' height='13' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --ink:#141414; --paper:#ffffff; --grey:#6f6f6f; --faint:#e8e8e8;
+    --ease:cubic-bezier(.16,1,.3,1);
+    --mono:'Courier Prime','Courier New',Courier,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:var(--mono); background:var(--paper); color:var(--ink);
+    height:100dvh; overflow:hidden; display:flex; flex-direction:column;
+    font-size:15px; line-height:1.45;
+  }
+  ::selection{background:var(--ink);color:var(--paper)}
+  button{font-family:var(--mono);cursor:pointer;background:none;border:none;color:inherit}
+  :focus-visible{outline:2px dashed var(--ink);outline-offset:2px}
+
+  /* ---------- top plate ---------- */
+  header{
+    display:flex;align-items:stretch;justify-content:space-between;gap:12px;
+    border-bottom:3px solid var(--ink); padding:10px 16px 8px; flex:0 0 auto;
+  }
+  .brand{font-weight:700;letter-spacing:.14em;font-size:clamp(15px,2.4vw,22px);text-transform:uppercase;line-height:1.1}
+  .brand small{display:block;font-weight:400;letter-spacing:.3em;font-size:10px;color:var(--grey);margin-top:3px}
+  .readouts{display:flex;gap:22px;align-items:center;font-size:11px;letter-spacing:.18em;text-transform:uppercase}
+  .readouts b{font-weight:700}
+  .readouts .dot{display:inline-block;width:8px;height:8px;border:2px solid var(--ink);border-radius:50%;margin-right:6px;vertical-align:-1px}
+  .readouts .dot.on{background:var(--ink)}
+  @media(max-width:640px){.readouts .hideS{display:none}}
+
+  /* ---------- tabs ---------- */
+  nav.tabs{display:flex;flex:0 0 auto;border-bottom:3px solid var(--ink);overflow-x:auto;scrollbar-width:none}
+  nav.tabs::-webkit-scrollbar{display:none}
+  .tab{
+    flex:1 0 auto;padding:10px 8px 8px;font-size:clamp(11px,1.8vw,14px);letter-spacing:.22em;
+    text-transform:uppercase;border-right:2px solid var(--ink);background:var(--paper);
+    transition:background .18s var(--ease),color .18s var(--ease);white-space:nowrap;
+  }
+  .tab:last-child{border-right:none}
+  .tab .no{color:var(--grey);margin-right:7px}
+  .tab[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+  .tab[aria-selected="true"] .no{color:#9a9a9a}
+  .tab:active{transform:translateY(1px)}
+  .tab:disabled{opacity:.32;cursor:default}
+
+  /* ---------- stage ---------- */
+  main{flex:1 1 auto;display:flex;min-height:0}
+  .finder{
+    flex:0 0 44%;border-right:3px solid var(--ink);position:relative;display:flex;
+    align-items:center;justify-content:center;padding:18px;min-width:0;
+  }
+  .framebox{position:relative;width:100%;max-width:520px}
+  .framebox .vf{
+    position:relative;border:2px solid var(--ink);background:#f4f4f4;overflow:hidden;
+    aspect-ratio:4/4.4;max-height:calc(100dvh - 240px);margin:0 auto;width:auto;max-width:100%;
+  }
+  @media(max-width:760px){
+    main{flex-direction:column}
+    .finder{flex:0 0 auto;border-right:none;border-bottom:3px solid var(--ink);padding:10px}
+    .framebox .vf{max-height:34dvh;aspect-ratio:auto;height:34dvh;width:100%}
+  }
+  .vf img{width:100%;height:100%;object-fit:contain;display:block;background:#fff}
+  .vf img[hidden]{display:none}
+  .vf .empty{
+    position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;
+    color:var(--grey);letter-spacing:.3em;font-size:11px;text-transform:uppercase;text-align:center;padding:12px;
+  }
+  .vf .hud{
+    position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;
+    padding:6px 9px;font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+    background:rgba(255,255,255,.88);border-top:1.5px solid var(--ink);
+  }
+  .tick{position:absolute;width:16px;height:16px;border:0 solid var(--ink);pointer-events:none;z-index:3}
+  .tick.tl{top:-2px;left:-2px;border-top-width:4px;border-left-width:4px}
+  .tick.tr{top:-2px;right:-2px;border-top-width:4px;border-right-width:4px}
+  .tick.bl{bottom:-2px;left:-2px;border-bottom-width:4px;border-left-width:4px}
+  .tick.br{bottom:-2px;right:-2px;border-bottom-width:4px;border-right-width:4px}
+  .facebox{position:absolute;border:2px dashed var(--ink);z-index:2;pointer-events:none}
+  .facebox i{position:absolute;top:-19px;left:-2px;background:var(--ink);color:#fff;font-style:normal;font-size:9px;letter-spacing:.2em;padding:2px 5px}
+  .vf.marking{cursor:crosshair}
+  .drawrect{position:absolute;border:2px dashed var(--ink);background:rgba(20,20,20,.08);z-index:2;pointer-events:none}
+
+  /* ---------- panels ---------- */
+  .panels{flex:1 1 auto;position:relative;min-width:0;overflow:hidden}
+  .panel{
+    position:absolute;inset:0;padding:20px 24px;overflow:hidden;display:none;flex-direction:column;gap:14px;
+  }
+  .panel.active{display:flex;animation:slidein .38s var(--ease)}
+  @keyframes slidein{from{transform:translateX(26px);opacity:0}to{transform:none;opacity:1}}
+  .panel.scrollable{overflow-y:auto}
+  .kicker{font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--grey)}
+  .rule{border:none;border-top:1.5px solid var(--ink)}
+  .rule.thin{border-top-color:var(--faint)}
+
+  /* keys (typewriter buttons) */
+  .key{
+    display:inline-block;border:2px solid var(--ink);padding:11px 18px 9px;background:var(--paper);
+    font-size:13px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;
+    box-shadow:0 3px 0 var(--ink);transition:transform .12s var(--ease),box-shadow .12s var(--ease),background .15s;
+    user-select:none;text-align:center;
+  }
+  .key:hover{background:#f0f0f0}
+  .key:active{transform:translateY(3px);box-shadow:0 0 0 var(--ink)}
+  .key.big{font-size:16px;padding:16px 26px 13px;width:100%}
+  .key[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+  .keyrow{display:flex;flex-wrap:wrap;gap:9px}
+  .keyrow .key{box-shadow:0 2px 0 var(--ink);padding:8px 12px 6px;font-size:11.5px}
+  .keyrow .key:active{transform:translateY(2px)}
+
+  /* load panel */
+  .drop{
+    border:2px dashed var(--ink);padding:26px 20px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center;
+  }
+  .drop.over{background:#efefef}
+  .attest{display:flex;gap:10px;align-items:flex-start;font-size:13px;max-width:52ch}
+  .attest input{appearance:none;width:20px;height:20px;border:2px solid var(--ink);flex:0 0 auto;margin-top:1px;cursor:pointer;position:relative;background:#fff}
+  .attest input:checked::after{content:'X';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .fineprint{font-size:11.5px;color:#3d3d3d;max-width:58ch}
+  .fineprint b{color:var(--ink)}
+
+  /* verdict panel */
+  .headline{font-size:clamp(24px,3.6vw,42px);font-weight:700;text-transform:uppercase;line-height:1.12;letter-spacing:.02em}
+  .scoreline{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  .range{font-size:clamp(52px,8vw,96px);font-weight:700;line-height:.95;letter-spacing:-.01em}
+  .bandlab{font-size:clamp(13px,2vw,18px);letter-spacing:.26em;text-transform:uppercase;border:2px solid var(--ink);padding:7px 12px 5px}
+  .meter{position:relative;height:56px;margin-top:4px}
+  .meter .track{position:absolute;left:0;right:0;top:24px;height:10px;border:2px solid var(--ink)}
+  .meter .shade{position:absolute;top:26px;height:6px;background:repeating-linear-gradient(45deg,var(--ink) 0 2px,transparent 2px 6px)}
+  .meter .needle{position:absolute;top:8px;width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-top:14px solid var(--ink);transform:translateX(-9px);transition:left .8s var(--ease)}
+  .meter .ticks{position:absolute;left:0;right:0;top:40px;display:flex;justify-content:space-between;font-size:9.5px;color:var(--grey);letter-spacing:.1em}
+  .fixes{display:flex;flex-direction:column;gap:5px;font-size:13.5px}
+  .fixes li{list-style:none}
+  .fixes li::before{content:'» ';font-weight:700}
+  .caveat{font-size:11.5px;color:#3d3d3d;border-top:1.5px solid var(--ink);padding-top:9px}
+
+  /* findings */
+  .factors{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:900px){.factors{grid-template-columns:1fr}}
+  .factor{border:2px solid var(--ink);padding:12px 14px}
+  .factor h3{font-size:11px;letter-spacing:.26em;text-transform:uppercase;font-weight:400;color:var(--grey)}
+  .factor .stamp{font-size:21px;font-weight:700;text-transform:uppercase;margin:5px 0 3px}
+  .factor p{font-size:12px;color:#3d3d3d}
+  .ledger{font-size:12.5px;width:100%;border-collapse:collapse}
+  .ledger td{padding:3.5px 4px;border-bottom:1px solid var(--faint);vertical-align:top}
+  .ledger td.n{text-align:right;font-weight:700;white-space:nowrap;width:52px}
+  .ledger tr.total td{border-top:2px solid var(--ink);border-bottom:none;font-weight:700}
+  .ledger .cl{color:var(--grey);font-size:10px;letter-spacing:.18em;text-transform:uppercase;white-space:nowrap;width:92px}
+  .ledger .src{color:var(--grey);font-size:10px;white-space:nowrap}
+
+  /* vibe */
+  .vibecols{display:grid;grid-template-columns:1fr 1fr;gap:14px;min-height:0}
+  @media(max-width:900px){.vibecols{grid-template-columns:1fr}}
+  .vibecol h3{font-size:11px;letter-spacing:.26em;text-transform:uppercase;border-bottom:2px solid var(--ink);padding-bottom:6px;margin-bottom:10px}
+  .slip{border:1.5px solid var(--ink);padding:9px 12px;margin-bottom:9px;background:#fff;box-shadow:3px 3px 0 var(--faint)}
+  .slip b{display:block;font-size:14px}
+  .slip span{font-size:11.5px;color:#3d3d3d}
+
+  /* refine */
+  .rgroup{display:flex;flex-direction:column;gap:7px}
+  .rgroup h3{font-size:10.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--grey);font-weight:400}
+  .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px 26px}
+  @media(max-width:900px){.rgrid{grid-template-columns:1fr}}
+
+  /* methods */
+  .methods{font-size:13px;max-width:70ch;display:flex;flex-direction:column;gap:12px}
+  .methods h3{font-size:11px;letter-spacing:.3em;text-transform:uppercase}
+  .methods li{margin-left:18px;margin-bottom:3px}
+
+  /* flash */
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:60}
+  #flash.go{animation:flashA .55s var(--ease) forwards}
+  @keyframes flashA{0%{opacity:0}7%{opacity:1}16%{opacity:1}100%{opacity:0}}
+  #flash.go2{animation:flashB .3s var(--ease) forwards}
+  @keyframes flashB{0%{opacity:0}20%{opacity:.85}100%{opacity:0}}
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+  footer{
+    flex:0 0 auto;border-top:3px solid var(--ink);padding:6px 16px;display:flex;justify-content:space-between;gap:10px;
+    font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--grey);
+  }
+  @media(max-width:640px){footer .hideS{display:none}}
+</style>
+</head>
+<body>
+
+<div id="flash" aria-hidden="true"></div>
+
+<header>
+  <div class="brand">First Impression Engine<small>FIE-01 · Photo Presentation Audit</small></div>
+  <div class="readouts">
+    <span><span class="dot" id="detDot"></span>Detector <b id="detState">···</b></span>
+    <span class="hideS">Frame <b id="frameNo">000</b></span>
+    <span class="hideS">Mode <b id="modeOut">Story</b></span>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Engine sections">
+  <button class="tab" role="tab" data-tab="load" aria-selected="true"><span class="no">01</span>Load</button>
+  <button class="tab" role="tab" data-tab="verdict" aria-selected="false" disabled><span class="no">02</span>Verdict</button>
+  <button class="tab" role="tab" data-tab="findings" aria-selected="false" disabled><span class="no">03</span>Findings</button>
+  <button class="tab" role="tab" data-tab="vibe" aria-selected="false" disabled><span class="no">04</span>Vibe</button>
+  <button class="tab" role="tab" data-tab="refine" aria-selected="false" disabled><span class="no">05</span>Refine</button>
+  <button class="tab" role="tab" data-tab="methods" aria-selected="false"><span class="no">06</span>Methods</button>
+</nav>
+
+<main>
+  <section class="finder" aria-label="Viewfinder">
+    <div class="framebox">
+      <div class="vf" id="vf">
+        <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
+        <div class="empty" id="vfEmpty"><span>No frame loaded</span><span style="letter-spacing:.14em;font-size:10px">Tab 01 — Load a photo</span></div>
+        <img id="photo" alt="Loaded photo" hidden>
+        <div class="hud"><span id="hudLeft">ISO — · ƒ/— · —</span><span id="hudRight">NO IMAGE DATA LEAVES THIS PAGE</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="panels">
+
+    <!-- 01 LOAD -->
+    <section class="panel active" id="panel-load" role="tabpanel">
+      <p class="kicker">Step 01 — Load the frame</p>
+      <div class="drop" id="drop">
+        <p style="letter-spacing:.2em;text-transform:uppercase;font-size:13px">Drop a photo here</p>
+        <button class="key big" id="pickBtn" type="button">Load photo</button>
+        <input type="file" id="file" accept="image/*" hidden>
+        <p style="font-size:11px;color:var(--grey);letter-spacing:.14em">JPG · PNG · WEBP · HEIC</p>
+      </div>
+      <label class="attest"><input type="checkbox" id="attest">
+        <span>This is me or I have permission to use this photo, and I'm 18 or older.</span></label>
+      <p class="fineprint"><b>No image data is uploaded or transmitted. Analysis runs locally in your browser.</b>
+      Built for solo social &amp; dating photos of adults. The engine scores how the <b>photo</b> presents — light, framing, expression, context — never the person in it.</p>
+    </section>
+
+    <!-- 02 VERDICT -->
+    <section class="panel" id="panel-verdict" role="tabpanel">
+      <p class="kicker">Photo Presentation Score — a range, never a verdict on a person</p>
+      <h2 class="headline" id="headline">—</h2>
+      <div class="scoreline">
+        <span class="range" id="rangeOut">–––</span>
+        <span class="bandlab" id="bandOut">—</span>
+      </div>
+      <div class="meter" aria-hidden="true">
+        <div class="track"></div><div class="shade" id="meterShade"></div><div class="needle" id="needle" style="left:50%"></div>
+        <div class="ticks"><span>0</span><span>WORKING AGAINST YOU</span><span>40 TAXED</span><span>55 MIXED</span><span>70 STRONG</span><span>85+</span><span>100</span></div>
+      </div>
+      <div>
+        <p class="kicker" style="margin-bottom:6px">Fix first — in this order</p>
+        <ul class="fixes" id="fixList"></ul>
+      </div>
+      <div class="keyrow">
+        <button class="key" id="shareBtn" type="button">Share card</button>
+        <button class="key" id="cardMode" type="button" aria-pressed="true">Card: photo on</button>
+        <button class="key" id="newBtn" type="button">New photo</button>
+      </div>
+      <p class="caveat">This range scores the photograph — its light, framing, expression and context — not the person in it. The width of the range is a published design rule for how much the engine could not measure, not a statistical confidence interval.</p>
+    </section>
+
+    <!-- 03 FINDINGS -->
+    <section class="panel scrollable" id="panel-findings" role="tabpanel">
+      <p class="kicker">What the frame is doing — measured first, inferred second</p>
+      <div class="factors" id="factorRow"></div>
+      <hr class="rule">
+      <p class="kicker">The build-up — every point accounted for</p>
+      <table class="ledger" id="ledger"></table>
+    </section>
+
+    <!-- 04 VIBE -->
+    <section class="panel scrollable" id="panel-vibe" role="tabpanel">
+      <p class="kicker">Possible first impressions — Inference</p>
+      <p style="font-size:12.5px;max-width:66ch">Anchored to research on young-adult social &amp; dating photo perception (mostly US college-age samples). These are reads of <b>this post</b> — the photo, its framing and its context — not traits of the person.</p>
+      <div class="vibecols">
+        <div class="vibecol"><h3>People who know you</h3><div id="vibeKnow"></div></div>
+        <div class="vibecol"><h3>Cold strangers</h3><div id="vibeCold"></div></div>
+      </div>
+    </section>
+
+    <!-- 05 REFINE -->
+    <section class="panel scrollable" id="panel-refine" role="tabpanel">
+      <p class="kicker">Tell the engine what it can't see — the read re-runs live</p>
+      <div class="rgrid">
+        <div class="rgroup"><h3>Audience</h3><div class="keyrow" data-group="audience">
+          <button class="key" data-v="story" aria-pressed="true">Story</button>
+          <button class="key" data-v="dating" aria-pressed="false">Dating</button>
+          <button class="key" data-v="public" aria-pressed="false">Public</button></div></div>
+        <div class="rgroup"><h3>Taken by</h3><div class="keyrow" data-group="takenBy">
+          <button class="key" data-v="selfie" aria-pressed="false">Selfie</button>
+          <button class="key" data-v="timer" aria-pressed="false">Timer</button>
+          <button class="key" data-v="someone" aria-pressed="false">Someone else</button>
+          <button class="key" data-v="unknown" aria-pressed="true">Not sure</button></div></div>
+        <div class="rgroup"><h3>Setting</h3><div class="keyrow" data-group="setting">
+          <button class="key" data-v="car" aria-pressed="false">Car</button>
+          <button class="key" data-v="indoors" aria-pressed="false">Indoors</button>
+          <button class="key" data-v="outdoors" aria-pressed="false">Outdoors</button>
+          <button class="key" data-v="unknown" aria-pressed="true">Not sure</button></div></div>
+        <div class="rgroup"><h3>Music sticker</h3><div class="keyrow" data-group="sticker">
+          <button class="key" data-v="none" aria-pressed="true">None</button>
+          <button class="key" data-v="hook" aria-pressed="false">Hook only</button>
+          <button class="key" data-v="romantic" aria-pressed="false">Romantic lyric</button>
+          <button class="key" data-v="unknown" aria-pressed="false">Not sure</button></div></div>
+        <div class="rgroup"><h3>Expression</h3><div class="keyrow" data-group="mouth">
+          <button class="key" data-v="flat" aria-pressed="true">Flat mouth</button>
+          <button class="key" data-v="slight" aria-pressed="false">Slight smile</button>
+          <button class="key" data-v="open" aria-pressed="false">Open smile</button></div></div>
+        <div class="rgroup"><h3>Eyes</h3><div class="keyrow" data-group="eyes">
+          <button class="key" data-v="open" aria-pressed="true">Open</button>
+          <button class="key" data-v="squint" aria-pressed="false">Squinting</button>
+          <button class="key" data-v="closed" aria-pressed="false">Closed / covered</button></div></div>
+        <div class="rgroup"><h3>Face</h3>
+          <p style="font-size:12.5px" id="faceInfo">—</p>
+          <div class="keyrow">
+            <button class="key" id="markBtn" type="button">Mark the face</button>
+            <span id="faceChips" class="keyrow"></span>
+          </div></div>
+      </div>
+      <p class="fineprint">Accessories — caps, sunglasses, chains — carry <b>zero</b> score weight. No study in the receipts isolates them; they are named in the teardown, never charged points.</p>
+    </section>
+
+    <!-- 06 METHODS -->
+    <section class="panel scrollable" id="panel-methods" role="tabpanel">
+      <div class="methods">
+        <p class="kicker">How the number is built</p>
+        <h3>The formula — published, not hidden</h3>
+        <p>Every read starts at <b>82</b>. Deductions are grouped into clusters so one root cause is never charged five times: Capture (max −10) · Framing (max −18) · Light (max −20) · Sharpness (max −8) · Expression (max −6 on Story/Public, −12 on Dating) · Context (max −8, inference only). The result is clamped between 5 and 97 and shown as a range: base width ±5, widened when expression came from controls instead of measurement (+4), when context is unknown (+3), or when the face box is hand-marked or missing (+3). These weights are design choices whose <i>direction</i> comes from the research below; they have not been calibrated against human ratings, and the engine says so.</p>
+        <h3>The receipts</h3>
+        <ul>
+          <li>Re, Chandrasena &amp; De Stefano (2016) — selfies are rated less attractive, less likeable and more narcissistic than other-taken photos of the same person.</li>
+          <li>Barry et al. (2019) — frequent selfie-posters are rated less likeable, less successful, more insecure.</li>
+          <li>Hinge (company data) — selfies receive roughly 40% fewer likes.</li>
+          <li>Photofeeler (replicated tests) — direct gaze with no smile is the weakest expression combination; a closed-mouth smile mainly buys trust.</li>
+          <li>Bryan (2012); Ward (2018) — close camera distance distorts features (≈30% wider nose at 12 inches) and lowers perceived trust and competence.</li>
+          <li>Hily survey of 5,500 US Gen Z &amp; millennial daters — a favourite artist can be a top turn-off for about a third of daters who factor music in; polarising picks help in-group and cost cold.</li>
+        </ul>
+        <h3>Not scored — on purpose</h3>
+        <p>Backwards caps, sunglasses worn on the head, chains, stubble, lint: no source in the receipts isolates any of these. An engine that charged points for them would be inventing precision it does not have.</p>
+        <h3>Privacy</h3>
+        <p><b>No image data is uploaded or transmitted. Analysis runs locally in your browser.</b> The detector's static model files load from a pinned public mirror of the exact audited version — your photo is never among the data that moves.</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <span>FIE-01 · Scores the photo, not the person</span>
+  <span class="hideS">Range width = what the engine could not measure</span>
+  <span>EST. MMXXVI</span>
+</footer>
+
+<script src="engine.js"></script>
+<script src="detector.js"></script>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const state = {
+  img: null, measures: null, face: null, faceMode: 'none', faces: [],
+  ctx: { audience: 'story', takenBy: 'unknown', setting: 'unknown', sticker: 'none' },
+  expr: { mouth: 'flat', eyes: 'open', source: 'toggles' },
+  result: null, frame: 0, cardPhoto: true,
+};
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- tabs ---------- */
+const tabs = [...document.querySelectorAll('.tab')];
+function showTab(name) {
+  tabs.forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+tabs.forEach(t => t.addEventListener('click', () => { if (!t.disabled) showTab(t.dataset.tab); }));
+
+/* ---------- detector status ---------- */
+FIE_DETECT.ready.then(() => {
+  const ok = FIE_DETECT.status() === 'ready';
+  $('#detState').textContent = ok ? 'READY' : 'OFFLINE';
+  $('#detDot').classList.toggle('on', ok);
+});
+
+/* ---------- flash ---------- */
+function flash(big) {
+  if (reduced) return;
+  const f = $('#flash');
+  f.classList.remove('go', 'go2'); void f.offsetWidth;
+  f.classList.add(big ? 'go' : 'go2');
+}
+
+/* ---------- loading a photo ---------- */
+const fileInput = $('#file');
+$('#pickBtn').addEventListener('click', () => {
+  if (!$('#attest').checked) { $('#attest').focus(); $('#attest').scrollIntoView({ block: 'center' }); shakeAttest(); return; }
+  fileInput.click();
+});
+function shakeAttest() {
+  const l = $('.attest'); l.style.transition = 'transform .1s'; l.style.transform = 'translateX(-4px)';
+  setTimeout(() => l.style.transform = 'translateX(4px)', 100); setTimeout(() => l.style.transform = '', 200);
+}
+const drop = $('#drop');
+['dragover', 'dragenter'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => { const f = ev.dataTransfer.files[0]; if (f) acceptFile(f); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) acceptFile(fileInput.files[0]); });
+
+function acceptFile(f) {
+  if (!$('#attest').checked) { shakeAttest(); $('#attest').focus(); return; }
+  if (!/^image\//.test(f.type) && !/\.heic$/i.test(f.name)) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => { onImage(img); };
+  img.src = url;
+}
+
+async function onImage(img) {
+  state.img = img; state.frame++;
+  $('#frameNo').textContent = String(state.frame).padStart(3, '0');
+  flash(true);                                   /* the shutter fires */
+  const photo = $('#photo');
+  photo.src = img.src; photo.hidden = false; $('#vfEmpty').style.display = 'none';
+  $('#hudLeft').textContent = 'FRAME ' + String(state.frame).padStart(3, '0') + ' · ' + img.naturalWidth + '×' + img.naturalHeight;
+  state.measures = FIE.measureImage(img);
+  state.face = null; state.faceMode = 'none'; state.faces = [];
+  clearFaceBox();
+  run();                                          /* instant read on defaults */
+  showTab('verdict');
+  tabs.forEach(t => { if (t.dataset.tab !== 'methods' && t.dataset.tab !== 'load') t.disabled = false; });
+  /* then detection upgrades the read */
+  const det = await FIE_DETECT.detect(img);
+  if (det && det.box) {
+    state.faces = det.boxes; state.face = det.box; state.faceMode = 'auto';
+    drawFaceBox(det.box, 'FACE');
+    renderFaceUI(det.count);
+    run();
+  } else {
+    $('#faceInfo').textContent = 'No face detected automatically. Use “Mark the face”, or leave it — framing simply won’t be scored.';
+    renderFaceUI(0);
+  }
+}
+
+/* ---------- face box ---------- */
+function clearFaceBox() { document.querySelectorAll('.facebox,.drawrect').forEach(e => e.remove()); }
+function drawFaceBox(box, label) {
+  clearFaceBox();
+  const vf = $('#vf'), r = $('#photo').getBoundingClientRect(), vr = vf.getBoundingClientRect();
+  /* photo is object-fit:contain — compute the displayed rect */
+  const img = state.img, scale = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
+  const ox = r.left - vr.left + (r.width - dw) / 2, oy = r.top - vr.top + (r.height - dh) / 2;
+  const d = document.createElement('div'); d.className = 'facebox';
+  d.style.left = (ox + box.x * dw) + 'px'; d.style.top = (oy + box.y * dh) + 'px';
+  d.style.width = (box.w * dw) + 'px'; d.style.height = (box.h * dh) + 'px';
+  d.innerHTML = '<i>' + label + '</i>';
+  vf.appendChild(d);
+}
+function renderFaceUI(count) {
+  const chips = $('#faceChips'); chips.innerHTML = '';
+  if (count > 1) {
+    $('#faceInfo').textContent = count + ' faces detected — tap one to read it:';
+    state.faces.forEach((b, i) => {
+      const btn = document.createElement('button'); btn.className = 'key'; btn.textContent = 'Face ' + (i + 1);
+      btn.setAttribute('aria-pressed', String(state.face === b));
+      btn.addEventListener('click', () => { state.face = b; drawFaceBox(b, 'FACE ' + (i + 1)); renderFaceUI(count); run(); });
+      chips.appendChild(btn);
+    });
+  } else if (state.faceMode === 'auto') {
+    $('#faceInfo').textContent = 'Face detected automatically. Framing is scored from its box.';
+  } else if (state.faceMode === 'marked') {
+    $('#faceInfo').textContent = 'Face marked by hand. Framing is scored; the range widens to say so.';
+  }
+}
+
+/* mark-the-face: drag a rect on the viewfinder */
+let marking = false, dragStart = null;
+$('#markBtn').addEventListener('click', () => {
+  if (!state.img) return;
+  marking = true; $('#vf').classList.add('marking');
+  $('#faceInfo').textContent = 'Drag a box around the face in the viewfinder.';
+});
+$('#vf').addEventListener('pointerdown', e => {
+  if (!marking) return;
+  const vr = $('#vf').getBoundingClientRect();
+  dragStart = { x: e.clientX - vr.left, y: e.clientY - vr.top };
+  const d = document.createElement('div'); d.className = 'drawrect'; d.id = 'drawLive';
+  d.style.left = dragStart.x + 'px'; d.style.top = dragStart.y + 'px'; $('#vf').appendChild(d);
+});
+$('#vf').addEventListener('pointermove', e => {
+  if (!marking || !dragStart) return;
+  const vr = $('#vf').getBoundingClientRect(), d = $('#drawLive'); if (!d) return;
+  const x = e.clientX - vr.left, y = e.clientY - vr.top;
+  d.style.left = Math.min(x, dragStart.x) + 'px'; d.style.top = Math.min(y, dragStart.y) + 'px';
+  d.style.width = Math.abs(x - dragStart.x) + 'px'; d.style.height = Math.abs(y - dragStart.y) + 'px';
+});
+$('#vf').addEventListener('pointerup', e => {
+  if (!marking || !dragStart) return;
+  marking = false; $('#vf').classList.remove('marking');
+  const d = $('#drawLive'); if (!d) { dragStart = null; return; }
+  const r = $('#photo').getBoundingClientRect(), vr = $('#vf').getBoundingClientRect();
+  const img = state.img, scale = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+  const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
+  const ox = r.left - vr.left + (r.width - dw) / 2, oy = r.top - vr.top + (r.height - dh) / 2;
+  const L = parseFloat(d.style.left), T = parseFloat(d.style.top), W = parseFloat(d.style.width), H = parseFloat(d.style.height);
+  d.remove(); dragStart = null;
+  if (W < 18 || H < 18) return;
+  state.face = { x: (L - ox) / dw, y: (T - oy) / dh, w: W / dw, h: H / dh };
+  state.faceMode = 'marked'; drawFaceBox(state.face, 'FACE — MARKED'); renderFaceUI(0); run();
+});
+
+/* ---------- scoring + rendering ---------- */
+function factorWord(v) { return v >= -2 ? 'Strong' : v >= -9 ? 'Mixed' : 'Taxed'; }
+function run() {
+  if (!state.measures) return;
+  const f = state.face ? FIE.faceStats(state.measures, state.face) : null;
+  const s = FIE.scorePhoto(state.measures, f, state.ctx, state.expr, state.faceMode);
+  state.result = s;
+  $('#modeOut').textContent = state.ctx.audience[0].toUpperCase() + state.ctx.audience.slice(1);
+  /* verdict */
+  $('#headline').textContent = FIE.verdictHeadline(s, state.ctx);
+  $('#rangeOut').textContent = s.lo + '–' + s.hi;
+  $('#bandOut').textContent = s.label;
+  $('#meterShade').style.left = s.lo + '%'; $('#meterShade').style.width = (s.hi - s.lo) + '%';
+  $('#needle').style.left = s.centre + '%';
+  const fixes = [...s.items].filter(i => i.pts < 0).sort((a, b) => a.pts - b.pts).slice(0, 3);
+  $('#fixList').innerHTML = fixes.length
+    ? fixes.map(i => '<li>' + fixText(i) + '</li>').join('')
+    : '<li>Nothing is stacking against this frame. Post it.</li>';
+  /* factors */
+  const C = s.clusters;
+  const factors = [
+    ['Light & Framing', C.Light + C.Framing + C.Sharpness, factorNote('light', C)],
+    ['Expression & Warmth', C.Expression, factorNote('expr', C)],
+    ['Context & Format', C.Capture + C.Context, factorNote('ctx', C)],
+  ];
+  $('#factorRow').innerHTML = factors.map(([n, v, note]) =>
+    '<div class="factor"><h3>' + n + '</h3><div class="stamp">' + factorWord(v) + '</div><p>' + note + '</p></div>').join('');
+  /* ledger */
+  let rows = s.items.map(i =>
+    '<tr><td class="cl">' + i.cluster + '</td><td>' + i.label + '</td><td class="src">' + i.strength + '</td><td class="n">' + (i.pts ? i.pts : '0') + '</td></tr>').join('');
+  rows += '<tr class="total"><td></td><td>Start 82 · total deductions</td><td></td><td class="n">' + s.total + '</td></tr>';
+  rows += s.widthItems.map(w => '<tr><td class="cl">Range</td><td>' + w.label + '</td><td class="src">design rule</td><td class="n">±' + w.pts + '</td></tr>').join('');
+  rows += '<tr class="total"><td></td><td>Photo Presentation Score</td><td></td><td class="n">' + s.lo + '–' + s.hi + '</td></tr>';
+  $('#ledger').innerHTML = rows;
+  /* vibe */
+  const v = FIE.vibeReads(s, state.ctx, f);
+  const slip = ([t, why]) => '<div class="slip"><b>' + t + '</b><span>because ' + why + '.</span></div>';
+  $('#vibeKnow').innerHTML = v.know.map(slip).join('');
+  $('#vibeCold').innerHTML = v.cold.map(slip).join('');
+}
+function factorNote(kind, C) {
+  if (kind === 'light') {
+    if (C.Light <= -10) return 'The light is the loudest thing in the frame — blown highlights or a hard split across the face.';
+    if (C.Sharpness <= -4) return 'Light holds; the frame reads soft, and soft reads as careless at a glance.';
+    if (C.Light + C.Framing <= -8) return 'Framing is spending the points here — scale and headroom, not the subject.';
+    return 'Light and framing are not taxing the read.';
+  }
+  if (kind === 'expr') return C.Expression <= -5
+    ? 'A flat mouth with a direct gaze is the weakest expression combination in the receipts — mainly it withholds warmth.'
+    : 'The expression is not working against the frame.';
+  return (C.Capture + C.Context) <= -8
+    ? 'The format is loud: selfie capture and setting announce themselves before the subject does.'
+    : 'Format and context stay quiet behind the subject.';
+}
+function fixText(i) {
+  const map = {
+    'Selfie capture': 'Let someone else take it — or a timer. Same you, measurably better read.',
+    'Blown highlights': 'Move out of direct sun. Shade or late light returns the detail the glare erased.',
+    'Harsh light split across the face': 'Turn until the light evens out — the split is what reads as harsh.',
+    'Face underexposed vs the frame': 'Tap to expose for the face, not the background.',
+    'Close-crop risk': 'Back the camera up. Distance distortion is taxing this more than anything you did.',
+    'Tight crop': 'Give the frame air — a looser crop reads calmer and more confident.',
+    'Headroom under 4%': 'Leave headroom. A frame that touches the head reads rushed.',
+    'Subject small in frame': 'Move closer or crop in — the subject should own the frame.',
+    'Flat mouth + direct gaze': 'A slight closed-mouth smile is the cheapest warmth there is. It mainly buys trust.',
+    'Squinted eyes': 'Shade first, then shoot — squint reads as strain.',
+    'Eyes closed / covered': 'Eyes carry the read. Covered or closed, the frame goes quiet.',
+    'Softness': 'Wipe the lens, hold still, tap to focus. Soft reads as careless.',
+    'Car interior setting': 'Step out of the car. It is the most-used backdrop there is.',
+    'Romantic / yearning lyric shown to a cold audience': 'For a cold audience, the hook segment carries better than the yearning one.',
+  };
+  for (const k in map) if (i.label.startsWith(k)) return map[k];
+  return i.label + ' (' + i.pts + ').';
+}
+
+/* ---------- refine keys ---------- */
+document.querySelectorAll('.keyrow[data-group]').forEach(row => {
+  row.addEventListener('click', e => {
+    const btn = e.target.closest('.key'); if (!btn) return;
+    row.querySelectorAll('.key').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    const g = row.dataset.group, v = btn.dataset.v;
+    if (g === 'mouth' || g === 'eyes') state.expr[g] = v; else state.ctx[g] = v;
+    flash(false);
+    run();
+  });
+});
+
+/* ---------- verdict actions ---------- */
+$('#newBtn').addEventListener('click', () => showTab('load'));
+$('#cardMode').addEventListener('click', e => {
+  state.cardPhoto = !state.cardPhoto;
+  e.currentTarget.setAttribute('aria-pressed', String(state.cardPhoto));
+  e.currentTarget.textContent = state.cardPhoto ? 'Card: photo on' : 'Card: text only';
+});
+$('#shareBtn').addEventListener('click', () => {
+  const s = state.result; if (!s) return;
+  const cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1350;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, 1080, 1350);
+  c.strokeStyle = '#141414'; c.lineWidth = 6; c.strokeRect(24, 24, 1032, 1302);
+  c.fillStyle = '#141414'; c.textAlign = 'left';
+  let y = 120;
+  c.font = '700 44px "Courier New",monospace';
+  c.fillText('FIRST IMPRESSION ENGINE', 72, y); y += 40;
+  c.font = '24px "Courier New",monospace'; c.fillStyle = '#6f6f6f';
+  c.fillText('PHOTO PRESENTATION SCORE', 72, y); y += 56;
+  if (state.cardPhoto && state.img) {
+    const iw = 936, ih = 560, sc = Math.max(iw / state.img.naturalWidth, ih / state.img.naturalHeight);
+    c.save(); c.beginPath(); c.rect(72, y, iw, ih); c.clip();
+    c.drawImage(state.img, 72 + (iw - state.img.naturalWidth * sc) / 2, y + (ih - state.img.naturalHeight * sc) / 2, state.img.naturalWidth * sc, state.img.naturalHeight * sc);
+    c.restore(); c.strokeStyle = '#141414'; c.lineWidth = 3; c.strokeRect(72, y, iw, ih); y += ih + 96;
+  }
+  c.fillStyle = '#141414';
+  c.font = '700 150px "Courier New",monospace';
+  c.fillText(s.lo + '–' + s.hi, 72, y); y += 58;
+  c.font = '700 34px "Courier New",monospace';
+  c.fillText(s.label.toUpperCase(), 72, y); y += 70;
+  c.font = '26px "Courier New",monospace';
+  const head = $('#headline').textContent.toUpperCase();
+  wrapText(c, head, 72, y, 930, 36).forEach(l => { c.fillText(l, 72, y); y += 38; });
+  y += 26; c.font = '23px "Courier New",monospace'; c.fillStyle = '#3d3d3d';
+  const caveat = 'This score grades the photograph — its light, framing, expression and context — never the person in it.';
+  wrapText(c, caveat, 72, y, 930, 32).forEach(l => { c.fillText(l, 72, y); y += 34; });
+  const a = document.createElement('a');
+  a.download = 'first-impression-card.png'; a.href = cv.toDataURL('image/png'); a.click();
+});
+function wrapText(c, text, x, y, maxW, lh) {
+  const words = text.split(' '), lines = []; let line = '';
+  for (const w of words) {
+    const t = line ? line + ' ' + w : w;
+    if (c.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+addEventListener('resize', () => { if (state.face && state.img) drawFaceBox(state.face, 'FACE'); });
+</script>
+</body>
+</html>
