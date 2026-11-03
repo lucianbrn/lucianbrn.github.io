@@ -57,6 +57,7 @@ const BG = {};
 [['plains','assets/bg-first-pressing-plains.webp'],['purple','assets/bg-purple-rain-kingdom.webp'],
  ['trapsoul','assets/bg-trapsoul-night-drive.webp'],['computer','assets/bg-computer-blue-mainframe.webp']
 ].forEach(([k,src])=>{ const im=new Image(); im.src=(window.__BGD&&window.__BGD[k])||src; BG[k]=im; });
+function hash2(n){ const s=Math.sin(n*127.1+311.7)*43758.5453; return s-Math.floor(s); }
 let MIDC=null, MIDKEY='';
 function buildMid(){ const def=L?L.def:LEVELS[0]; const img=BG[def.bg]; if(!img||!img.complete||!img.naturalWidth)return;
   if(MIDKEY===def.bg&&MIDC)return; MIDKEY=def.bg;
@@ -104,8 +105,10 @@ function setSong(name){ stopFileAudio(); if(curSong===name)return; curSong=name;
    exact filename for every level). If a matching file exists it plays
    looped INSTEAD of the chiptune; if not, the chiptune plays. Level-id
    files (audio/11-b.mp3) beat world files (audio/computer.mp3). */
-const fileAudio=new Audio(); fileAudio.loop=true; fileAudio.volume=.55; let fileMode=false, fileAttempt=0;
-function stopFileAudio(){ fileAttempt++; fileMode=false; try{ fileAudio.pause(); fileAudio.removeAttribute('src'); }catch(e){} }
+const fileAudio=new Audio(); fileAudio.loop=true; fileAudio.volume=.55; let fileMode=false, fileAttempt=0, fileArmed=false;
+addEventListener('keydown',()=>{ if(fileArmed){ fileArmed=false; fileAudio.play().catch(()=>{}); } });
+addEventListener('pointerdown',()=>{ if(fileArmed){ fileArmed=false; fileAudio.play().catch(()=>{}); } });
+function stopFileAudio(){ fileAttempt++; fileMode=false; fileArmed=false; try{ fileAudio.pause(); fileAudio.removeAttribute('src'); }catch(e){} }
 function startMusicFor(def){ stopFileAudio(); if(musicTimer)clearTimeout(musicTimer); curSong=null;
   const cand=['audio/'+def.id.toLowerCase()+'.mp3','audio/'+def.song+'.mp3']; const my=fileAttempt; let i=0;
   const fallback=()=>{ if(my===fileAttempt) setSong(def.song); };
@@ -114,7 +117,10 @@ function startMusicFor(def){ stopFileAudio(); if(musicTimer)clearTimeout(musicTi
     const to=setTimeout(()=>{ if(!settled){ settled=true; tryNext(); } },4500);
     fileAudio.onerror=()=>{ if(!settled){ settled=true; clearTimeout(to); tryNext(); } };
     fileAudio.oncanplay=()=>{ if(!settled){ settled=true; clearTimeout(to); fileAudio.onerror=null;
-      fileMode=true; fileAudio.muted=muted; const pr=fileAudio.play(); if(pr)pr.catch(()=>{ fileMode=false; fallback(); }); } };
+      fileMode=true; fileAudio.muted=muted; const pr=fileAudio.play();
+      if(pr)pr.catch(()=>{ // browser blocked autoplay (play call wasn't inside the key/click gesture):
+        // stay armed — the very next key press or click starts the track. No chiptune swap.
+        fileArmed=true; }); } };
     fileAudio.src=src; fileAudio.load(); };
   tryNext(); }
 function sfx(kind){ if(!AC||muted)return; const t=AC.currentTime;
@@ -167,7 +173,7 @@ const LEVELS=[
     coins:[[6,8],[10,6],[15,8],[20,7],[31,6],[37,8],[42,7]], hidden:[[10,6],[31,6],[45,9]], enemies:[['skip',13],['skip',22],['loop',28],['skip',38],['plant',33]],
     flower:[17,8], checkpoint:26, goalX:47, width:52,
     hint:'Arrows move • Z jumps • stomp the Skippers — the walking skip buttons' }; } },
-{ id:'2-1', name:'PURPLE RAIN FALLS', world:'World 2 — Purple Rain Kingdom (Prince, 50.3 hrs)', track:'Original funk instrumental — in the spirit of Purple Rain (18.1 hrs)', bg:'purple', song:'purple', sky:['#1c0b38','#4b1e78'], rain:true,
+{ id:'2-1', name:'PURPLE RAIN DEPTHS', world:'World 2 — Purple Rain Underground (Prince, 50.3 hrs)', track:'Original funk instrumental — in the spirit of Purple Rain (18.1 hrs)', bg:'purple', song:'purple', sky:['#07030f','#150826'], rain:true, underground:true,
   build(){ return { solids:[...baseGround(true,[10,8,9,10,12]), T(3,9,3,1,'plat'),T(8,7,2,1,'q'),T(13,9,3,1,'plat'),T(17,6,3,1,'plat'),T(22,9,2,1,'brick'),T(23,9,1,1,'q'),T(27,8,3,1,'plat'),T(33,7,3,1,'plat'),T(38,9,2,1,'q808'),T(42,8,3,1,'plat')],
     coins:[[4,8],[14,8],[18,5],[28,7],[34,6],[39,8],[43,7]], hidden:[[18,5],[34,6],[6,10]], enemies:[['slime',7],['skip',15],['slime',20],['loop',30],['plant',36],['slime',40]],
     flower:[24,8], checkpoint:25, goalX:47, width:52,
@@ -187,7 +193,7 @@ const LEVELS=[
     coins:[[5,8],[15,8],[20,5],[30,7],[36,6],[41,8],[46,7]], hidden:[[20,5],[36,6],[5,10]], enemies:[['skip',12],['loop',17],['slime',27],['plant',32],['skip',38],['loop',44]],
     flower:[22,8], checkpoint:26, goalX:50, width:55,
     hint:'Toronto at 1 AM. Snow, gold, and the biggest world in the game' }; } },
-{ id:'2-B', name:'BOSS — LORD MONOTONE', world:'World 2 Boss — Purple Rain Kingdom', track:'Boss funk — beat the metronome OFF-beat', bg:'purple', song:'boss', sky:['#160830','#3d1663'], boss:'monotone', rain:true,
+{ id:'2-B', name:'BOSS — LORD MONOTONE', world:'World 2 Boss — Purple Rain Underground', track:'Boss funk — beat the metronome OFF-beat', bg:'purple', song:'boss', sky:['#07030f','#150826'], boss:'monotone', rain:true, underground:true,
   build(){ return { solids:[T(0,12,24,2,'ground')], coins:[], hidden:[], enemies:[], flower:null, checkpoint:-1, goalX:-1, width:24, arena:true,
     hint:'Stomp his metronome when it flashes, then stomp HIM off-beat — 3 hits' }; } },
 { id:'3-A', name:'AIRSHIP — BABY BOWSER TRUMP', world:'World 3 Airship — the recurring boss', track:'Boss rage-beat — nobody platformers better than him, believe me', bg:'purple', song:'boss', sky:['#200a30','#5a1e3c'], boss:'babyb',
@@ -456,7 +462,26 @@ let weather=[];
 function drawBG(){ const def=L?L.def:LEVELS[0]; const g=ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0,def.sky[0]); g.addColorStop(1,def.sky[1]); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   const img=BG[def.bg];
-  if(img&&img.complete&&img.naturalWidth){ const off=-((cam.x*.32)%W); ctx.globalAlpha=.95;
+  if(def.underground){ // ===== UNDERGROUND (Mario cave feel) × COMPUTER-PRINCE =====
+    const wg=ctx.createLinearGradient(0,0,0,H); wg.addColorStop(0,'#08030f'); wg.addColorStop(1,'#20093d'); ctx.fillStyle=wg; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='rgba(0,229,255,.13)'; ctx.lineWidth=2; ctx.beginPath(); // neon circuit traces in the rock
+    const goff=-((cam.x*.4)%220);
+    for(let gx=goff-220;gx<W+220;gx+=220){ ctx.moveTo(gx,150); ctx.lineTo(gx+70,150); ctx.lineTo(gx+70,220); ctx.lineTo(gx+130,220); } ctx.stroke();
+    ctx.fillStyle='rgba(0,229,255,.4)';
+    for(let gx=goff-220;gx<W+220;gx+=220){ ctx.beginPath(); ctx.arc(gx+130,220,3.4,0,7); ctx.fill(); }
+    const gw=Math.floor(cam.x/1500)*1500+950-cam.x; if(gw>-220&&gw<W+220){ ctx.save(); ctx.translate(gw,310); // giant neon guitar landmark
+      ctx.strokeStyle='rgba(178,107,255,.32)'; ctx.lineWidth=3; ctx.shadowColor='#b26bff'; ctx.shadowBlur=18;
+      ctx.beginPath(); ctx.ellipse(0,60,44,58,.5,0,7); ctx.stroke(); ctx.beginPath(); ctx.moveTo(28,16); ctx.lineTo(96,-92); ctx.lineTo(112,-84); ctx.lineTo(42,30); ctx.stroke(); ctx.restore(); }
+    for(let i=0;i<6;i++){ const cx2=((i*263-cam.x*.7)%(W+240)+(W+240))%(W+240)-120, cy2=H-92-(i%3)*38; // glowing purple crystals
+      const cg2=ctx.createRadialGradient(cx2,cy2,2,cx2,cy2,46); cg2.addColorStop(0,'rgba(190,120,255,.55)'); cg2.addColorStop(1,'rgba(190,120,255,0)');
+      ctx.fillStyle=cg2; ctx.fillRect(cx2-46,cy2-46,92,92);
+      ctx.fillStyle='#c99aff'; ctx.beginPath(); ctx.moveTo(cx2,cy2-13); ctx.lineTo(cx2+7,cy2); ctx.lineTo(cx2,cy2+13); ctx.lineTo(cx2-7,cy2); ctx.closePath(); ctx.fill(); }
+    const pts=[]; for(let sx=0;sx<=W+44;sx+=44){ const d=24+hash2(sx+cam.x)*58; pts.push([sx,52+d*.35]); pts.push([sx+22,52+d]); }
+    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(W,0); for(let i=pts.length-1;i>=0;i--)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath();
+    const cg3=ctx.createLinearGradient(0,0,0,140); cg3.addColorStop(0,'#040109'); cg3.addColorStop(1,'#251045'); ctx.fillStyle=cg3; ctx.fill();
+    ctx.strokeStyle='rgba(178,107,255,.5)'; ctx.lineWidth=2; ctx.beginPath(); pts.forEach((p,i)=>{ i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); }); ctx.stroke();
+  }
+  else if(img&&img.complete&&img.naturalWidth){ const off=-((cam.x*.32)%W); ctx.globalAlpha=.95;
     for(let x=off-W;x<W+W;x+=W)ctx.drawImage(img,x,0,W,H); ctx.globalAlpha=1;
     // midground depth layer (Wii-style 2.5D): same world, darker + bigger + slower = behind the play plane
     // (pre-rendered once per level into MIDC so no per-frame filter cost)
