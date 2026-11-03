@@ -105,10 +105,10 @@ function setSong(name){ stopFileAudio(); if(curSong===name)return; curSong=name;
    exact filename for every level). If a matching file exists it plays
    looped INSTEAD of the chiptune; if not, the chiptune plays. Level-id
    files (audio/11-b.mp3) beat world files (audio/computer.mp3). */
-const fileAudio=new Audio(); fileAudio.loop=true; fileAudio.volume=.55; let fileMode=false, fileAttempt=0, fileArmed=false;
+const fileAudio=new Audio(); fileAudio.loop=true; fileAudio.volume=.85; let fileMode=false, fileAttempt=0, fileArmed=false, fileLabel='';
 addEventListener('keydown',()=>{ if(fileArmed){ fileArmed=false; fileAudio.play().catch(()=>{}); } });
 addEventListener('pointerdown',()=>{ if(fileArmed){ fileArmed=false; fileAudio.play().catch(()=>{}); } });
-function stopFileAudio(){ fileAttempt++; fileMode=false; fileArmed=false; try{ fileAudio.pause(); fileAudio.removeAttribute('src'); }catch(e){} }
+function stopFileAudio(){ fileAttempt++; fileMode=false; fileArmed=false; fileLabel=''; try{ fileAudio.pause(); fileAudio.removeAttribute('src'); }catch(e){} }
 function startMusicFor(def){ stopFileAudio(); if(musicTimer)clearTimeout(musicTimer); curSong=null;
   const emb=(window.__AUD&&(window.__AUD[def.id]||window.__AUD[def.song]))||null;
   const cand=[...(emb?[emb]:[]),'audio/'+def.id.toLowerCase()+'.mp3','audio/'+def.song+'.mp3']; const my=fileAttempt; let i=0;
@@ -118,7 +118,7 @@ function startMusicFor(def){ stopFileAudio(); if(musicTimer)clearTimeout(musicTi
     const to=setTimeout(()=>{ if(!settled){ settled=true; tryNext(); } },4500);
     fileAudio.onerror=()=>{ if(!settled){ settled=true; clearTimeout(to); tryNext(); } };
     fileAudio.oncanplay=()=>{ if(!settled){ settled=true; clearTimeout(to); fileAudio.onerror=null;
-      fileMode=true; fileAudio.muted=muted; const pr=fileAudio.play();
+      fileMode=true; fileLabel=def.id==='1-1'?'BOREDOM — TYLER, THE CREATOR (INSTRUMENTAL · YOUR FILE)':def.id==='11-B'?'COMPUTER BLUE — PRINCE (INSTRUMENTAL · YOUR FILE)':'YOUR MP3 — '+def.id; fileAudio.muted=muted; const pr=fileAudio.play();
       if(pr)pr.catch(()=>{ // browser blocked autoplay (play call wasn't inside the key/click gesture):
         // stay armed — the very next key press or click starts the track. No chiptune swap.
         fileArmed=true; }); } };
@@ -818,6 +818,7 @@ function drawHUD(){ const T=(t,x,y,col,font,align)=>{ ctx.font=font; ctx.textAli
   if(dropT>0){ ctx.fillStyle='rgba(14,6,30,.55)'; rr(W/2-150,40,300,7,3.5); ctx.fill();
     ctx.fillStyle='#ff5da2'; rr(W/2-150,40,300*(dropT/24),7,3.5); ctx.fill();
     T('★ THE DROP ★',W/2,68,'#ff5da2','900 13px Trebuchet MS','center'); }
+  if(fileMode&&fileLabel)T('♪ '+fileLabel,W/2,H-12,'#ffd94d','900 12px Trebuchet MS','center');
   if(banner){ const a=clamp(banner.t*3,0,1)*(banner.t>2.9?clamp((3.4-banner.t)*2,0,1):1); ctx.globalAlpha=a;
     T(banner.txt,W/2,108,'#ffd94d','900 30px Trebuchet MS','center');
     T(banner.sub,W/2,132,'#ffffff','13px Trebuchet MS','center');
