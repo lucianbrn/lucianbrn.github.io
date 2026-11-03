@@ -106,7 +106,7 @@ function startMusicFor(def){ stopFileAudio(); if(musicTimer)clearTimeout(musicTi
   const fallback=()=>{ if(my===fileAttempt) setSong(def.song); };
   const tryNext=()=>{ if(my!==fileAttempt)return; if(i>=cand.length){ fallback(); return; }
     const src=cand[i++]; let settled=false;
-    const to=setTimeout(()=>{ if(!settled){ settled=true; tryNext(); } },1800);
+    const to=setTimeout(()=>{ if(!settled){ settled=true; tryNext(); } },4500);
     fileAudio.onerror=()=>{ if(!settled){ settled=true; clearTimeout(to); tryNext(); } };
     fileAudio.oncanplay=()=>{ if(!settled){ settled=true; clearTimeout(to); fileAudio.onerror=null;
       fileMode=true; fileAudio.muted=muted; const pr=fileAudio.play(); if(pr)pr.catch(()=>{ fileMode=false; fallback(); }); } };
