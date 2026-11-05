@@ -321,8 +321,8 @@ function updatePlayer(dt){ if(P.dead){ P.vy+=GRAV*dt; P.y+=P.vy*dt; if(P.y>H+300
     if(frame%24===0)burst(P.x+50,P.y-26,12,'#ffd94d',170,.7,260);
     if(goalSeq>=1.5)levelClear(); return; }
   P.animT+=dt*(Math.abs(P.vx)>20?Math.abs(P.vx)/28:1);
-  if(P.invuln>0)P.invuln-=dt; if(P.jbuf>0)P.jbuf-=dt; if(P.coyote>0)P.coyote-=dt;
-  const run=keys.ShiftLeft||keys.ShiftRight, maxSp=run?330:235, acc=P.onGround?2600:1700;
+  if(P.invuln>0)P.invuln-=dt; if(P.jbuf>0)P.jbuf-=dt; if(P.coyote>0)P.coyote-=dt; if(P.landT>0)P.landT-=dt;
+  const run=keys.ShiftLeft||keys.ShiftRight, maxSp=run?345:250, acc=P.onGround?2600:1700;
   let want=0; if(left())want-=1; if(right())want+=1;
   P.skid=false;
   if(want!==0){ if(Math.sign(P.vx)===-want&&P.onGround&&Math.abs(P.vx)>120){P.skid=true; if(frame%4===0)burst(P.x+P.w/2,P.y+P.h-2,1,'#cfc4e8',60,.3,200);}
@@ -341,7 +341,7 @@ function updatePlayer(dt){ if(P.dead){ P.vy+=GRAV*dt; P.y+=P.vy*dt; if(P.y>H+300
   const hb=collideMove(P,dt,true);
   if(hb)hitBlockAction(hb);
   if(P.onGround){ P.coyote=.10; if(!wasGround){ // landing
-      P.squash=.72; if(fallV>520)camDip=Math.min(7,(fallV-520)/70); burst(P.x+P.w/2,P.y+P.h,Math.min(10,fallV/90|0),'#e8e0ff',110,.4,300,true);
+      P.squash=.72; P.landT=.13; if(fallV>520)camDip=Math.min(7,(fallV-520)/70); burst(P.x+P.w/2,P.y+P.h,Math.min(10,fallV/90|0),'#e8e0ff',110,.4,300,true);
       if(P.pounding){ P.pounding=false; shake=Math.max(shake,7); sfx('thud'); burst(P.x+P.w/2,P.y+P.h,18,'#ffffff',260,.5,400); poundShock(); } }
     if(Math.abs(P.vx)>200&&frame%5===0)burst(P.x+P.w/2,P.y+P.h-2,1,'#d8cff5',50,.3,150); }
   { const sqA=(1-P.squash)*190-P.squashV*13.5; P.squashV+=sqA*dt; P.squash=clamp(P.squash+P.squashV*dt,.45,1.5); }
@@ -483,6 +483,7 @@ const PAL={ plains:{top:'#58b13c',body:'#8a5a2b',edge:'#ffd94d',plat:'#c98d4b'},
 let camDip=0, fadeA=0, freezeT=0, flagT=0, goalSeq=0; const poppers=[];
 function curZ(){ if(!L||L.arena||!L.def)return 1; return L.def.underground?1.15:1.35; }
 let weather=[];
+const PSPR=[]; for(let i=0;i<8;i++){ const im=new Image(); im.src=(window.__PSPRD&&__PSPRD[i])||('assets/sprites/p'+i+'.png'); PSPR.push(im); }
 const BOSSPR={}; for(const n of ['algorithm','psycho','juke']){ const im=new Image(); im.src=(window.__BOSSD&&__BOSSD[n])||('assets/bosses/boss-'+n+'.png'); BOSSPR[n]=im; }
 const PROPS={};
 ['cloud-a','cloud-b','bush','flower','sign','cave-crystal','cave-shard','cave-guitar','cave-rock','cave-node','night-lamp','night-car','night-skyline','night-palm','night-sign','sky-canopy','sky-balloon','sky-cloudplat','sky-pillar','sky-ring'].forEach(n=>{const i=new Image();i.src=(window.__PROPD&&window.__PROPD[n])||('assets/props/'+n+'.png');PROPS[n]=i;});
@@ -648,7 +649,28 @@ function drawPoppers(){ for(const pp of poppers){ const x=pp.x-cam.x; if(x<-40||
       ctx.fillStyle=cg; ctx.beginPath(); ctx.ellipse(0,0,9.5,13.5,0,0,7); ctx.fill(); ctx.strokeStyle='#c07f04'; ctx.lineWidth=2.6; ctx.stroke();
       ctx.fillStyle='rgba(160,100,0,.55)'; rr(-2,-7,4,14,2); ctx.fill(); ctx.restore(); } } ctx.globalAlpha=1; }
 function drawPlayer(){ blobShadow(P.x-cam.x+P.w/2,P.y+P.h+3,P.onGround?22:14,P.onGround?.32:.16);
-  if(P.invuln>0&&frame%6<3&&!P.dead)return; const x=P.x-cam.x+P.w/2, feet=P.y+P.h;
+  if(P.invuln>0&&frame%6<3&&!P.dead)return;
+  const spr=PSPR[0];
+  if(spr&&spr.complete&&spr.naturalWidth){
+    let fi=0;
+    if(P.pounding||P.dead)fi=5;
+    else if(!P.onGround)fi=P.vy<0?4:5;
+    else if(P.skid)fi=6;
+    else if((P.landT||0)>0)fi=7;
+    else if(Math.abs(P.vx)>25)fi=[1,2,3,2][Math.floor(P.animT)%4];
+    const im=PSPR[fi]&&PSPR[fi].complete&&PSPR[fi].naturalWidth?PSPR[fi]:spr;
+    const DH=P.h*1.52*(P.big?1.14:1), DW=DH*im.naturalWidth/im.naturalHeight;
+    const bob=P.onGround&&Math.abs(P.vx)<=25?Math.sin(frame*.06)*.8:0;
+    ctx.save(); ctx.translate(P.x-cam.x+P.w/2,P.y+P.h+1+bob);
+    ctx.scale(P.face*(1+(1-P.squash)*.7),P.squash);
+    ctx.rotate(clamp(P.vx*.0004,-.1,.1)*(P.onGround?1:.5));
+    ctx.drawImage(im,-DW/2,-DH,DW,DH);
+    ctx.restore();
+    if(P.pounding){ ctx.fillStyle='rgba(255,255,255,.35)'; ctx.fillRect(P.x-cam.x+4,P.y-26,3,22); ctx.fillRect(P.x-cam.x+20,P.y-26,3,22); }
+    return;
+  }
+  drawPlayerProc(); }
+function drawPlayerProc(){ const x=P.x-cam.x+P.w/2, feet=P.y+P.h;
   ctx.save(); ctx.translate(x,feet); ctx.scale(P.face*(1+(1-P.squash)*.7), P.squash);
   ctx.translate(0,-P.h);
   const bobY=P.onGround?(Math.abs(P.vx)>25?-Math.abs(Math.sin(P.animT*1.9))*2.4:Math.sin(frame*.06)*.8):(P.vy<0?-1.6:1.2);
