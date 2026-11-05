@@ -30,7 +30,7 @@ const PLATE_H=1296, PLATE_Y=GROUND-0.654*PLATE_H; // plate walkway line lands on
 
 const IMG={};
 function load(name,src){const i=new Image();i.src=(window.__W1&&__W1[name])||src;IMG[name]=i;return i;}
-['scene_a','scene_b','scene_c','scene_d','layer_fg'].forEach(n=>load(n,'assets/'+n+'.png'));
+['scene_a','scene_b','scene_c','scene_d' ,'layer_fg'].forEach(n=>load(n,'assets/'+n+'.png'));
 ['idle','walk1','walk2','walk3','run','jump','fall','crouch','climb','push'].forEach(n=>load('boy_'+n,'assets/boy_'+n+'.png'));
 ['crab_giant','crab_small_1','crab_small_2','gull_1','gull_2','gull_3','tide_wave','planks'].forEach(n=>load(n,'assets/'+n+'.png'));
 
@@ -82,10 +82,46 @@ const grain=document.createElement('canvas'); grain.width=grain.height=256;
  for(let i=0;i<d.data.length;i+=4){const v=Math.random()*255|0; d.data[i]=d.data[i+1]=d.data[i+2]=v; d.data[i+3]=255;}
  g.putImageData(d,0,0);}
 
+// ---------- AMBIENCE: changing light, dust, living layers ----------
+// zone light rig: [tint rgb, tint alpha, darkness] keyed by world x — dawn gold -> boardwalk -> pier steel -> white
+const ZONES=[ {x:0,   c:[255,176,92],  a:.14, d:.05},
+              {x:2100,c:[255,196,130], a:.08, d:.02},
+              {x:4400,c:[150,180,205], a:.10, d:.10},
+              {x:6800,c:[170,195,220], a:.07, d:.06},
+              {x:8600,c:[255,250,238], a:.05, d:0} ];
+function zoneAt(x){ let A=ZONES[0],B=ZONES[ZONES.length-1];
+  for(let i=0;i<ZONES.length-1;i++){ if(x>=ZONES[i].x&&x<=ZONES[i+1].x){A=ZONES[i];B=ZONES[i+1];break;} }
+  const t=Math.max(0,Math.min(1,(x-A.x)/Math.max(1,(B.x-A.x))));
+  return { c:A.c.map((v,i)=>Math.round(v+(B.c[i]-v)*t)), a:A.a+(B.a-A.a)*t, d:A.d+(B.d-A.d)*t }; }
+function hash(n){ const v=Math.sin(n*127.1)*43758.5453; return v-Math.floor(v); }
+// dust motes: three parallax depths, wrap around the camera
+const MOTES=[]; for(let i=0;i<110;i++){ const depth=[0.25,0.55,1][i%3];
+  MOTES.push({bx:hash(i*3+1)*2400, by:40+hash(i*3+2)*430, depth, s:0.6+hash(i*7)*1.9, ph:hash(i*11)*6.28, sp:0.3+hash(i*13)*0.7}); }
+// footstep / landing dust puffs
+const PUFFS=[];
+function puff(x,y,n,spread){ for(let i=0;i<n;i++){ if(PUFFS.length>130) break;
+  PUFFS.push({x:x+(hash(tGlobal*91+i*17)-.5)*spread, y:y-2, vx:(hash(i*31+tGlobal)-.5)*36, vy:-12-hash(i*7)*22, l:1, r:2.5+hash(i*3)*4}); } }
+let prevGround=true, prevVy=0, stepAcc=0;
+// distant gull that crosses the sky now and then
+const skyGull={t:-6, x:0, y:90, sp:56};
+let flick=0;
+function dotSprite(size,rgb,peak){ const c=document.createElement('canvas'); c.width=c.height=size;
+  const g=c.getContext('2d'); const id=g.createImageData(size,size); const h=size/2;
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++){ const dx=x-h, dy=y-h, d=Math.sqrt(dx*dx+dy*dy)/(h*0.94);
+    const k=Math.max(0,1-d), idx=(y*size+x)*4;
+    id.data[idx]=rgb[0]; id.data[idx+1]=rgb[1]; id.data[idx+2]=rgb[2]; id.data[idx+3]=Math.round(peak*k*k); }
+  g.putImageData(id,0,0); return c; }
+const speck=dotSprite(64,[22,18,12],140), glowSpr=dotSprite(128,[255,186,92],120), cloudSpr=dotSprite(128,[6,8,14],110);
+
 // ---------- update ----------
 const ACCEL=2500, MAXV=178, FRIC=2300, GRAV=1500, JUMPV=648;
 function update(dt){
   tGlobal+=dt;
+  flick=Math.sin(tGlobal*13.7)*0.5+Math.sin(tGlobal*7.3+1.7)*0.35+Math.sin(tGlobal*29.1)*0.15;
+  for(const p of PUFFS){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy-=6*dt; p.l-=dt*1.15; p.r+=9*dt; }
+  for(let i=PUFFS.length-1;i>=0;i--) if(PUFFS[i].l<=0) PUFFS.splice(i,1);
+  skyGull.t+=dt; if(skyGull.t>15){ skyGull.t=-7-hash(tGlobal)*4; skyGull.y=60+hash(tGlobal*3)*130; skyGull.sp=44+hash(tGlobal*7)*30; }
+  if(skyGull.t>0) skyGull.x=skyGull.t*skyGull.sp-140;
   if(fadeDir===1){ fade=Math.min(1,fade+dt*2.4); if(fade>=1){ respawn(); fadeDir=-1; } }
   else if(fadeDir===-1){ fade=Math.max(0,fade-dt*1.8); if(fade<=0) fadeDir=0; }
   if(player.dead>0) return;
@@ -147,6 +183,11 @@ function update(dt){
   tide.up = (tw>4.6 && tw<5.9);
   if(tide.up && Math.abs(player.x-tide.x)<52 && player.y>GROUND-150) die();
 
+  // dust the player kicks up himself
+  if(player.onGround && Math.abs(player.vx)>60){ stepAcc+=Math.abs(player.vx)*dt;
+    if(stepAcc>46){ stepAcc=0; puff(player.x-player.face*8, player.y, 2, 10); } }
+  if(player.onGround && !prevGround && prevVy>260) puff(player.x, player.y, 9, 30);
+  prevGround=player.onGround; prevVy=player.vy;
   // the crown
   if(player.x>=CROWN_X && !won){ won=true; }
   // camera — smooth, slightly behind the walk
@@ -171,6 +212,15 @@ function render(){
     const sx=s*SEG-camX; if(sx+SEG<-50||sx>VW+50) continue;
     ctx.drawImage(img,sx,PLATE_Y,SEG,PLATE_H);
   }
+  // the ground itself has texture: plank seams + wet sheen + sand speckle, world-locked
+  { ctx.fillStyle='rgba(0,0,0,.13)'; const seam0=-((camX)%64);
+    for(let x=seam0;x<VW;x+=64) ctx.fillRect(x,GROUND+3,2,30);
+    const sh=ctx.createLinearGradient(0,GROUND,0,GROUND+34);
+    sh.addColorStop(0,'rgba(255,235,200,.07)'); sh.addColorStop(1,'rgba(255,235,200,0)');
+    ctx.fillStyle=sh; ctx.fillRect(0,GROUND,VW,34);
+    ctx.fillStyle='rgba(230,220,195,.20)';
+    const gx0=Math.floor(camX/26)*26;
+    for(let wx=gx0;wx<camX+VW+26;wx+=26){ if(hash(wx)>0.45) ctx.fillRect(wx-camX, GROUND+5+hash(wx*3)*22, 2, 1.6); } }
   // gaps: cut the walkway (dark water/shadow below) + broken plank dressing
   for(const g of GAPS){
     const gx=g.x-camX; if(gx+g.w<-20||gx>VW+20) continue;
@@ -204,6 +254,21 @@ function render(){
       ctx.fillStyle='#1d160f'; ctx.fillRect(px,p.y,p.w,13);
       ctx.fillStyle='rgba(255,214,150,.38)'; ctx.fillRect(px,p.y,p.w,3);
       ctx.fillStyle='rgba(0,0,0,.4)'; for(let sx=px+24;sx<px+p.w-4;sx+=26) ctx.fillRect(sx,p.y+3,2,10); } }
+  // sea glints: tiny light teeth on the water, world-locked, twinkling
+  { ctx.fillStyle='rgba(255,240,210,.5)';
+    const wx0=Math.floor(camX/46)*46;
+    for(let wx=wx0;wx<camX+VW+46;wx+=46){ const seg=Math.floor(wx/SEG);
+      if(seg===1) continue;                       // no open water in the boardwalk row
+      const tw2=hash(wx*1.7+Math.floor(tGlobal*2.2)*13.7);
+      if(tw2>0.55){ const gy=GROUND+34+hash(wx*3.1)*46; ctx.globalAlpha=0.14+0.3*tw2;
+        ctx.fillRect(wx-camX, gy, 9+hash(wx)*15, 1.4); } }
+    ctx.globalAlpha=1; }
+  // a distant gull crosses now and then
+  if(skyGull.t>0 && skyGull.x<VW+90) drawSprite(IMG.gull_2, skyGull.x, skyGull.y+26, 30, false);
+  // the porch lantern actually throws light (and breathes)
+  { const lx=338-camX;
+    if(lx>-120&&lx<VW+120){ ctx.save(); ctx.globalAlpha=0.55*(0.75+flick*0.25);
+      ctx.drawImage(glowSpr, lx-95, 47, 190, 190); ctx.restore(); } }
   // tide hand
   if(tide.up) drawSprite(IMG.tide_wave,tide.x-camX,GROUND+8,168,false);
   // crabs
@@ -214,9 +279,7 @@ function render(){
   // the crown at the arch — seated on its plinth (the plate's own crown), softly lit
   { const cx=CROWN_X-camX;
     if(cx>-60&&cx<VW+60){ const pulse=22+Math.sin(tGlobal*2.2)*6;
-      const gl=ctx.createRadialGradient(cx,GROUND-96,4,cx,GROUND-96,64);
-      gl.addColorStop(0,'rgba(255,205,80,.34)'); gl.addColorStop(1,'rgba(255,205,80,0)');
-      ctx.fillStyle=gl; ctx.fillRect(cx-64,GROUND-160,128,128);
+      ctx.save(); ctx.globalAlpha=.75; ctx.drawImage(glowSpr, cx-64, GROUND-160, 128, 128); ctx.restore();
       ctx.save(); ctx.shadowColor='rgba(255,196,64,.9)'; ctx.shadowBlur=pulse;
       ctx.fillStyle='#f2b63c'; const s=13, by=GROUND-86;
       ctx.beginPath(); ctx.moveTo(cx-s,by); ctx.lineTo(cx-s,by-20); ctx.lineTo(cx-s*0.55,by-8);
@@ -227,7 +290,8 @@ function render(){
     if(!player.onGround) spr=player.vy<0?'boy_jump':'boy_fall';
     else if(keys.down) spr='boy_crouch';
     else if(Math.abs(player.vx)>14){ const cyc=['boy_walk1','boy_walk2','boy_walk3','boy_walk2']; spr=cyc[Math.floor(player.anim)%4]; }
-    drawSprite(IMG[spr],player.x-camX,player.y+2,106,player.face<0); }
+    ctx.save(); ctx.shadowColor='rgba(255,196,110,.38)'; ctx.shadowBlur=7; ctx.shadowOffsetX=player.face<0?2:-2;
+    drawSprite(IMG[spr],player.x-camX,player.y+2,106,player.face<0); ctx.restore(); }
   // foreground frame layer (fast parallax — the Limbo frame)
   { const fg=IMG.layer_fg;
     if(fg.complete&&fg.naturalWidth){ const fh=215, fw=fg.naturalWidth/fg.naturalHeight*fh;
@@ -235,6 +299,24 @@ function render(){
       ctx.save(); ctx.globalAlpha=.8; ctx.filter='blur(1px)';
       let ti=0; for(let x=off;x<VW;x+=fw,ti++){ if(ti%2){ ctx.save(); ctx.translate(x+fw,0); ctx.scale(-1,1); ctx.drawImage(fg,0,VH-fh+34,fw,fh); ctx.restore(); } else ctx.drawImage(fg,x,VH-fh+34,fw,fh); }
       ctx.restore(); } }
+  // ===== CHANGING LIGHT =====
+  const Z=zoneAt(player.x), breathe=0.5+0.5*Math.sin(tGlobal*0.23);
+  // zone tint + darkness
+  ctx.fillStyle=`rgba(${Z.c[0]},${Z.c[1]},${Z.c[2]},${Z.a})`; ctx.fillRect(0,0,VW,VH);
+  if(Z.d>0.005){ ctx.fillStyle=`rgba(4,6,12,${Z.d})`; ctx.fillRect(0,0,VW,VH); }
+  // cloud shadows: huge soft blobs drifting over the scene, each on its own clock
+  ctx.save(); ctx.globalAlpha=.5;
+  for(let i=0;i<4;i++){ const cxx=((tGlobal*(7+i*3.4)+i*430)%(VW+560))-280, cyy=60+i*105+Math.sin(tGlobal*0.07+i)*16;
+    const cr=250+i*40; ctx.drawImage(cloudSpr, cxx-cr, cyy-cr, cr*2, cr*2); }
+  ctx.restore();
+  // light shafts breathing through the pier timbers + dawn shaft at the porch
+  ctx.save(); ctx.globalCompositeOperation='screen';
+  const shaft=(sx,wd,al)=>{ const grd=ctx.createLinearGradient(sx,0,sx+wd,VH);
+    grd.addColorStop(0,`rgba(255,226,170,${al})`); grd.addColorStop(1,'rgba(255,226,170,0)');
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.moveTo(sx,0); ctx.lineTo(sx+46,0); ctx.lineTo(sx+wd+90,VH); ctx.lineTo(sx+wd,VH); ctx.closePath(); ctx.fill(); };
+  if(camX<1500) shaft(300-camX*0.4, 130, 0.05+0.035*breathe);
+  if(camX>SEG*2-700 && camX<SEG*3){ shaft(240-(camX%(SEG))*0.06, 170, 0.06+0.04*Math.sin(tGlobal*0.31+2)); shaft(560-(camX%(SEG))*0.06, 120, 0.045+0.03*breathe); }
+  ctx.restore();
   // drifting fog bands
   ctx.save();
   for(let i=0;i<3;i++){ const fy=250+i*90+Math.sin(tGlobal*0.11+i*2)*10;
@@ -242,6 +324,29 @@ function render(){
     grd.addColorStop(0,'rgba(226,232,236,0)'); grd.addColorStop(.5,'rgba(226,232,236,.055)'); grd.addColorStop(1,'rgba(226,232,236,0)');
     ctx.fillStyle=grd; ctx.fillRect(0,fy-46,VW,92); }
   ctx.restore();
+  // ===== DUST =====
+  // motes at three depths — the far ones barely move, the near ones swim past
+  { const zc=Z.c;
+    for(const m of MOTES){ let mx=(m.bx - camX*m.depth + tGlobal*7*m.sp) % (VW+60); if(mx<-30)mx+=VW+60;
+      const my=m.by + Math.sin(tGlobal*0.5*m.sp + m.ph)*13 - camX*0.002*m.depth;
+      const a=0.05+0.11*(0.5+0.5*Math.sin(tGlobal*m.sp+m.ph*3));
+      ctx.fillStyle=`rgba(${zc[0]},${zc[1]},${zc[2]},${a})`;
+      ctx.beginPath(); ctx.arc(mx, my% (VH+20), m.s*(m.depth===1?1.5:1), 0, 7); ctx.fill(); }
+    // puffs the player kicked up
+    for(const p of PUFFS){ ctx.fillStyle=`rgba(216,204,182,${0.20*p.l})`;
+      ctx.beginPath(); ctx.arc(p.x-camX, p.y, p.r, 0, 7); ctx.fill(); }
+    // giant soft foreground specks — dust right against the lens
+    for(let i=0;i<9;i++){ const fx2=((hash(i*37)*1400 - camX*1.45 + tGlobal*4) % (VW+240) + VW+240) % (VW+240) - 120;
+      const sr=(9+hash(i*71)*15)*2; ctx.globalAlpha=.16;
+      ctx.drawImage(speck, fx2-sr, 60+hash(i*53)*(VH-120)-sr, sr*2, sr*2); }
+    ctx.globalAlpha=1; }
+  // swaying dune grass in the near foreground — the frame itself is alive
+  { ctx.save(); ctx.strokeStyle='rgba(8,10,7,.85)'; ctx.lineWidth=2.4; ctx.lineCap='round';
+    const sway=Math.sin(tGlobal*1.15)*5;
+    for(let i=0;i<26;i++){ const bxx=hash(i*17)*(VW+80)-40 + Math.sin(tGlobal*0.4+i)*2;
+      const bh=30+hash(i*23)*54, bend=sway*(0.5+hash(i*29)) + Math.sin(tGlobal*1.7+i*1.3)*2.5;
+      ctx.beginPath(); ctx.moveTo(bxx,VH+4); ctx.quadraticCurveTo(bxx+bend*0.3, VH-bh*0.6, bxx+bend, VH-bh); ctx.stroke(); }
+    ctx.restore(); }
   // grain
   ctx.save(); ctx.globalAlpha=.038;
   const gx=(Math.random()*256)|0, gy=(Math.random()*256)|0;
