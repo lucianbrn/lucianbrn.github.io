@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Super Lucian World — World 1: Ready to Die (Limbo build)</title>
+<style>
+  html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+  canvas{display:block;width:min(100vw,177.78vh);height:auto;aspect-ratio:16/9;background:#0a0c10}
+  #title{position:fixed;left:0;right:0;top:34%;text-align:center;color:#e8e4da;font-family:Georgia,serif;
+    letter-spacing:.35em;font-size:15px;opacity:0;transition:opacity 2.2s ease;pointer-events:none;text-transform:uppercase}
+  #title small{display:block;margin-top:10px;letter-spacing:.5em;font-size:10px;color:#9a958a}
+  #hint{position:fixed;left:0;right:0;bottom:4.5%;text-align:center;color:rgba(232,228,218,.5);
+    font-family:Georgia,serif;letter-spacing:.25em;font-size:10px;text-transform:uppercase;pointer-events:none;transition:opacity 1.5s ease}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv" width="960" height="540"></canvas></div>
+<div id="title">World 1<small>Ready to Die — Seaside</small></div>
+<div id="hint">walk &larr; &rarr; &nbsp;&middot;&nbsp; jump &uarr; &nbsp;&middot;&nbsp; crouch &darr;</div>
+<script src="assets.js"></script>
+<script>
+"use strict";
+// ============ SUPER LUCIAN WORLD — WORLD 1 · THE LIMBO BUILD ============
+// Composed scene plates (no tiles), 3 depth planes, weighted walk, fog/grain/vignette.
+// The world is in colour. The walker is a black silhouette. The gold Casio is his.
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const VW=960, VH=540, SEG=2304, WORLD_W=SEG*4, GROUND=452;
+const PLATE_H=1296, PLATE_Y=GROUND-0.654*PLATE_H; // plate walkway line lands on GROUND
+
+const IMG={};
+function load(name,src){const i=new Image();i.src=(window.__W1&&__W1[name])||src;IMG[name]=i;return i;}
+['scene_a','scene_b','scene_c','scene_d','layer_fg'].forEach(n=>load(n,'assets/'+n+'.png'));
+['idle','walk1','walk2','walk3','run','jump','fall','crouch','climb','push'].forEach(n=>load('boy_'+n,'assets/boy_'+n+'.png'));
+['crab_giant','crab_small_1','crab_small_2','gull_1','gull_2','gull_3','tide_wave','planks'].forEach(n=>load(n,'assets/'+n+'.png'));
+
+// ---------- level data ----------
+const GAPS=[ {x:SEG+1500,w:130}, {x:SEG*2+700,w:170} ];              // broken boardwalk / pier hole
+const CRATES=[ {x:SEG+880,y:GROUND-56,w:112,h:56}, {x:SEG+904,y:GROUND-112,w:64,h:56} ];
+const CHECKPOINTS=[120, SEG+80, SEG*2+80, SEG*3+80];
+const CROWN_X=SEG*3+1400; // aligned over the painted plinth inside the arch
+
+const player={x:120,y:GROUND,vx:0,vy:0,face:1,onGround:true,coyote:0,jbuf:0,dead:0,anim:0};
+let camX=0, deaths=0, won=false, fade=0, fadeDir=0, tGlobal=0, started=false;
+const keys={left:false,right:false,jump:false,down:false};
+let checkpoint=120;
+
+// enemies
+const crab={x:SEG+1980,home:SEG+1980,dir:1,phase:0};                 // the boardwalk guardian
+const smallCrabs=[{x:SEG-520,home:SEG-520,dir:1},{x:SEG*3+700,home:SEG*3+700,dir:-1}];
+const gulls=[0,1,2].map(i=>({x:SEG*2+500+i*620,y:-80,state:'wait',t:0,img:'gull_'+(i+1)}));
+const tide={x:SEG*2+2050,t:0};
+
+// ---------- helpers ----------
+function groundAt(x, py){ // ground y, null over a gap; crates; the crab's back (if you're up there)
+  if(py!==undefined && py<=GROUND-96 && Math.abs(x-crab.x)<95) return GROUND-118;
+  for(const c of CRATES){ if(x>=c.x-6 && x<=c.x+c.w+6) return c.y; }
+  for(const g of GAPS){ if(x>g.x+8 && x<g.x+g.w-8) return null; }
+  return GROUND;
+}
+function die(){ if(player.dead>0||won) return; player.dead=1; deaths++; fadeDir=1; }
+function respawn(){
+  player.x=checkpoint; player.y=GROUND; player.vx=0; player.vy=0; player.dead=0;
+  for(const g of gulls){g.state='wait'; g.y=-80; g.t=0;}
+  crab.x=crab.home; crab.phase=0; crab.lunge=0;
+}
+
+// ---------- input ----------
+const KEYMAP={ArrowLeft:'left',KeyA:'left',ArrowRight:'right',KeyD:'right',ArrowUp:'jump',KeyW:'jump',Space:'jump',ArrowDown:'down',KeyS:'down'};
+addEventListener('keydown',e=>{const k=KEYMAP[e.code]; if(k){keys[k]=true; if(k==='jump')player.jbuf=0.12; e.preventDefault();}});
+addEventListener('keyup',e=>{const k=KEYMAP[e.code]; if(k){keys[k]=false; e.preventDefault();}});
+
+// ---------- grain ----------
+const grain=document.createElement('canvas'); grain.width=grain.height=256;
+{const g=grain.getContext('2d'), d=g.createImageData(256,256);
+ for(let i=0;i<d.data.length;i+=4){const v=Math.random()*255|0; d.data[i]=d.data[i+1]=d.data[i+2]=v; d.data[i+3]=255;}
+ g.putImageData(d,0,0);}
+
+// ---------- update ----------
+const ACCEL=2500, MAXV=178, FRIC=2300, GRAV=1500, JUMPV=648;
+function update(dt){
+  tGlobal+=dt;
+  if(fadeDir===1){ fade=Math.min(1,fade+dt*2.4); if(fade>=1){ respawn(); fadeDir=-1; } }
+  else if(fadeDir===-1){ fade=Math.max(0,fade-dt*1.8); if(fade<=0) fadeDir=0; }
+  if(player.dead>0) return;
+
+  // checkpoints
+  for(const cp of CHECKPOINTS) if(player.x>=cp) checkpoint=Math.max(checkpoint,cp);
+
+  // ---- the guardian crab moves first (its back is a platform; it can carry you) ----
+  crab.phase+=dt;
+  const cdx=player.x-crab.x;
+  if(Math.abs(cdx)<240 && crab.phase>2.6){ crab.phase=0; crab.lunge=0.55; }
+  const crabPrevX=crab.x;
+  if(crab.lunge>0){ crab.lunge-=dt; crab.x+=Math.sign(cdx)*340*dt; }
+  else crab.x+=crab.dir*46*dt;
+  if(crab.x>crab.home+150)crab.dir=-1; if(crab.x<crab.home-150)crab.dir=1;
+  crab.dx=crab.x-crabPrevX;
+  if(player.onGround && player.y===GROUND-118 && Math.abs(player.x-crab.x)<95) player.x+=crab.dx;
+
+  // horizontal — LIMBO weight: accelerate, don't snap
+  const want=(keys.right?1:0)-(keys.left?1:0);
+  if(want!==0){ player.vx+=want*ACCEL*dt; player.face=want; }
+  else { const s=Math.sign(player.vx); player.vx-=s*FRIC*dt; if(Math.sign(player.vx)!==s) player.vx=0; }
+  player.vx=Math.max(-MAXV,Math.min(MAXV,player.vx));
+  player.x+=player.vx*dt;
+  player.x=Math.max(24,Math.min(WORLD_W-40,player.x));
+
+  // vertical
+  if(keys.jump&&!update._pj) player.jbuf=0.12; update._pj=keys.jump;
+  player.coyote-=dt; player.jbuf-=dt;
+  const g=groundAt(player.x, player.y);
+  player.vy+=GRAV*dt; player.y+=player.vy*dt;
+  if(g!==null && player.y>=g && player.vy>=0){ player.y=g; player.vy=0; player.onGround=true; player.coyote=0.09; }
+  else player.onGround=false;
+  if(player.jbuf>0 && (player.onGround||player.coyote>0)){
+    player.vy=-JUMPV; player.onGround=false; player.coyote=0; player.jbuf=0;
+  }
+  if(!keys.jump && player.vy<-230) player.vy=-230;           // variable jump height
+  if(player.y>VH+260) die();                                  // fell through a gap
+
+  // ---- the guardian crab: a wall at ground level; its SNAP kills; its back is the way over ----
+  { const dx=player.x-crab.x;
+    if(crab.lunge>0){ if(Math.abs(dx)<88 && player.y>GROUND-96) die(); }
+    else if(player.y>GROUND-96 && Math.abs(dx)<102) player.x=crab.x+Math.sign(dx||1)*102; }
+
+  // small crabs scuttle
+  for(const c of smallCrabs){ c.x+=c.dir*26*dt; if(c.x>c.home+120)c.dir=-1; if(c.x<c.home-120)c.dir=1;
+    if(Math.abs(player.x-c.x)<26 && player.y>GROUND-20) die(); }
+
+  // gulls dive on the pier
+  for(const gu of gulls){
+    if(gu.state==='wait' && player.x>gu.x-430){ gu.state='dive'; gu.t=0; gu.sx=gu.x; gu.sy=60; }
+    if(gu.state==='dive'){ gu.t+=dt; const k=Math.min(1,gu.t/0.85);
+      gu.x=gu.sx+( (SEG*2+  (gulls.indexOf(gu))*620 +300) -gu.sx)*k; gu.y=60+(GROUND-120-60)*k*k;
+      if(Math.abs(player.x-gu.x)<40 && Math.abs(player.y-46-gu.y)<52) die();
+      if(k>=1){gu.state='gone';} }
+  }
+  // the tide reaches
+  tide.t+=dt; const tw=(tide.t%6.5);
+  tide.up = (tw>4.6 && tw<5.9);
+  if(tide.up && Math.abs(player.x-tide.x)<52 && player.y>GROUND-150) die();
+
+  // the crown
+  if(player.x>=CROWN_X && !won){ won=true; }
+  // camera — smooth, slightly behind the walk
+  const target=Math.max(0,Math.min(WORLD_W-VW, player.x-372));
+  camX+=(target-camX)*Math.min(1,dt*4.2);
+  player.anim+=Math.abs(player.vx)*dt*0.055;
+}
+
+// ---------- draw ----------
+const PLATES=['scene_a','scene_b','scene_c','scene_d'];
+function drawSprite(img,x,y,h,flip){
+  if(!img||!img.complete||!img.naturalWidth) return;
+  const w=img.naturalWidth/img.naturalHeight*h;
+  ctx.save(); ctx.translate(x,y); if(flip)ctx.scale(-1,1);
+  ctx.drawImage(img,-w/2,-h,w,h); ctx.restore();
+}
+function render(){
+  ctx.clearRect(0,0,VW,VH);
+  // scene plates
+  for(let s=0;s<4;s++){
+    const img=IMG[PLATES[s]]; if(!img.complete) continue;
+    const sx=s*SEG-camX; if(sx+SEG<-50||sx>VW+50) continue;
+    ctx.drawImage(img,sx,PLATE_Y,SEG,PLATE_H);
+  }
+  // gaps: cut the walkway (dark water/shadow below) + broken plank dressing
+  for(const g of GAPS){
+    const gx=g.x-camX; if(gx+g.w<-20||gx>VW+20) continue;
+    ctx.fillStyle='#05090c'; ctx.fillRect(gx,GROUND-2,g.w,VH-GROUND+2);
+    ctx.fillStyle='rgba(70,95,105,.5)'; ctx.fillRect(gx,GROUND+44,g.w,3);
+    drawSprite(IMG.planks,gx+g.w/2,GROUND+6,44,false);
+  }
+  // crates (silhouette blocks on the play plane)
+  for(const c of CRATES){
+    const cx=c.x-camX; if(cx+c.w<-20||cx>VW+20) continue;
+    ctx.fillStyle='#0b0d0f'; ctx.fillRect(cx,c.y,c.w,c.h);
+    ctx.fillStyle='rgba(200,190,160,.14)'; ctx.fillRect(cx,c.y,c.w,3);
+    ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.strokeRect(cx+.5,c.y+.5,c.w-1,c.h-1);
+  }
+  // tide hand
+  if(tide.up) drawSprite(IMG.tide_wave,tide.x-camX,GROUND+8,168,false);
+  // crabs
+  drawSprite(IMG.crab_giant,crab.x-camX,GROUND+4,150,crab.dir<0);
+  smallCrabs.forEach((c,i)=>drawSprite(IMG['crab_small_'+(i+1)],c.x-camX,GROUND+4,52,c.dir<0));
+  // gulls
+  for(const gu of gulls) if(gu.state==='dive') drawSprite(IMG[gu.img],gu.x-camX,gu.y+40,86,player.x<gu.x);
+  // the crown at the arch — seated on its plinth (the plate's own crown), softly lit
+  { const cx=CROWN_X-camX;
+    if(cx>-60&&cx<VW+60){ const pulse=22+Math.sin(tGlobal*2.2)*6;
+      const gl=ctx.createRadialGradient(cx,GROUND-96,4,cx,GROUND-96,64);
+      gl.addColorStop(0,'rgba(255,205,80,.34)'); gl.addColorStop(1,'rgba(255,205,80,0)');
+      ctx.fillStyle=gl; ctx.fillRect(cx-64,GROUND-160,128,128);
+      ctx.save(); ctx.shadowColor='rgba(255,196,64,.9)'; ctx.shadowBlur=pulse;
+      ctx.fillStyle='#f2b63c'; const s=13, by=GROUND-86;
+      ctx.beginPath(); ctx.moveTo(cx-s,by); ctx.lineTo(cx-s,by-20); ctx.lineTo(cx-s*0.55,by-8);
+      ctx.lineTo(cx,by-24); ctx.lineTo(cx+s*0.55,by-8); ctx.lineTo(cx+s,by-20); ctx.lineTo(cx+s,by);
+      ctx.closePath(); ctx.fill(); ctx.restore(); } }
+  // the walker
+  { let spr='boy_idle';
+    if(!player.onGround) spr=player.vy<0?'boy_jump':'boy_fall';
+    else if(keys.down) spr='boy_crouch';
+    else if(Math.abs(player.vx)>14){ const cyc=['boy_walk1','boy_walk2','boy_walk3','boy_walk2']; spr=cyc[Math.floor(player.anim)%4]; }
+    drawSprite(IMG[spr],player.x-camX,player.y+2,106,player.face<0); }
+  // foreground frame layer (fast parallax — the Limbo frame)
+  { const fg=IMG.layer_fg;
+    if(fg.complete&&fg.naturalWidth){ const fh=215, fw=fg.naturalWidth/fg.naturalHeight*fh;
+      let off=-(camX*1.22)%fw; if(off>0)off-=fw;
+      ctx.save(); ctx.globalAlpha=.8; ctx.filter='blur(1px)';
+      let ti=0; for(let x=off;x<VW;x+=fw,ti++){ if(ti%2){ ctx.save(); ctx.translate(x+fw,0); ctx.scale(-1,1); ctx.drawImage(fg,0,VH-fh+34,fw,fh); ctx.restore(); } else ctx.drawImage(fg,x,VH-fh+34,fw,fh); }
+      ctx.restore(); } }
+  // drifting fog bands
+  ctx.save();
+  for(let i=0;i<3;i++){ const fy=250+i*90+Math.sin(tGlobal*0.11+i*2)*10;
+    const grd=ctx.createLinearGradient(0,fy-46,0,fy+46);
+    grd.addColorStop(0,'rgba(226,232,236,0)'); grd.addColorStop(.5,'rgba(226,232,236,.10)'); grd.addColorStop(1,'rgba(226,232,236,0)');
+    ctx.fillStyle=grd; ctx.fillRect(0,fy-46,VW,92); }
+  ctx.restore();
+  // grain
+  ctx.save(); ctx.globalAlpha=.055;
+  const gx=(Math.random()*256)|0, gy=(Math.random()*256)|0;
+  for(let x=-gx;x<VW;x+=256) for(let y=-gy;y<VH;y+=256) ctx.drawImage(grain,x,y);
+  ctx.restore();
+  // vignette
+  { const v=ctx.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);
+    v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(0,0,0,.52)');
+    ctx.fillStyle=v; ctx.fillRect(0,0,VW,VH); }
+  // won: the white takes the screen
+  if(won){ ctx.fillStyle='rgba(244,242,236,.96)'; ctx.fillRect(0,0,VW,VH);
+    ctx.fillStyle='#17181a'; ctx.font='15px Georgia'; ctx.textAlign='center';
+    ctx.fillText('W O R L D   1   C L E A R', VW/2, VH/2-8);
+    ctx.font='11px Georgia'; ctx.fillStyle='#5a5c5e';
+    ctx.fillText('the crown was a beginning', VW/2, VH/2+18); }
+  // death fade
+  if(fade>0){ ctx.fillStyle=`rgba(0,0,0,${fade})`; ctx.fillRect(0,0,VW,VH); }
+}
+
+// ---------- main loop ----------
+let last=performance.now();
+function frame(now){
+  let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
+  update(dt); render();
+  if(!started){ started=true; const t=document.getElementById('title'); t.style.opacity=1;
+    setTimeout(()=>{t.style.opacity=0;},3400);
+    setTimeout(()=>{document.getElementById('hint').style.opacity=0;},9000); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// test hooks
+window.sim={ get x(){return player.x}, get y(){return player.y}, get deaths(){return deaths},
+  get won(){return won}, get camX(){return camX}, get checkpoint(){return checkpoint},
+  keys, warp(x){player.x=x; player.y=GROUND; player.vx=0; player.vy=0; checkpoint=Math.max(checkpoint,120);},
+  setCheckpoint(x){checkpoint=x; player.x=x;},
+  reset(){ won=false; deaths=0; checkpoint=120; fade=0; fadeDir=0; respawn(); camX=0; },
+  step(sec){ const n=Math.max(1,Math.round(sec*60)); for(let i=0;i<n;i++) update(1/60); render(); },
+  snapCam(){ camX=Math.max(0,Math.min(9216-960, player.x-372)); render(); } };
+</script>
+</body>
+</html>
