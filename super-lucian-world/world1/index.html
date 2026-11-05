@@ -37,6 +37,11 @@ function load(name,src){const i=new Image();i.src=(window.__W1&&__W1[name])||src
 // ---------- level data ----------
 const GAPS=[ {x:SEG+1500,w:130}, {x:SEG*2+700,w:170} ];              // broken boardwalk / pier hole
 const CRATES=[ {x:SEG+880,y:GROUND-56,w:112,h:56}, {x:SEG+904,y:GROUND-112,w:64,h:56} ];
+const PLATFORMS=[ {x:1450,y:392,w:150},{x:1700,y:352,w:150},                       // dune hops over the small crab
+  {x:3380,y:380,w:180},{x:3620,y:330,w:160},                                        // scaffold, then leap the gap
+  {x:5050,y:350,w:300},{x:5400,y:350,w:240},                                        // pier beams over the hole
+  {x:6300,y:360,w:120},{x:6480,y:276,w:280},                                        // step up, beam over the tide
+  {x:7950,y:392,w:140,m:1},{x:8180,y:338,w:140,m:1} ];                               // white marble steps
 const CHECKPOINTS=[120, SEG+80, SEG*2+80, SEG*3+80];
 const CROWN_X=SEG*3+1400; // aligned over the painted plinth inside the arch
 
@@ -54,6 +59,7 @@ const tide={x:SEG*2+2050,t:0};
 // ---------- helpers ----------
 function groundAt(x, py){ // ground y, null over a gap; crates; the crab's back (if you're up there)
   if(py!==undefined && py<=GROUND-96 && Math.abs(x-crab.x)<95) return GROUND-118;
+  { let bp=null; for(const p of PLATFORMS){ if(x>=p.x-4 && x<=p.x+p.w+4 && py!==undefined && p.y>=py-30) bp=(bp===null?p.y:Math.min(bp,p.y)); } if(bp!==null) return bp; }
   for(const c of CRATES){ if(x>=c.x-6 && x<=c.x+c.w+6) return c.y; }
   for(const g of GAPS){ if(x>g.x+8 && x<g.x+g.w-8) return null; }
   return GROUND;
@@ -168,17 +174,36 @@ function render(){
   // gaps: cut the walkway (dark water/shadow below) + broken plank dressing
   for(const g of GAPS){
     const gx=g.x-camX; if(gx+g.w<-20||gx>VW+20) continue;
-    ctx.fillStyle='#05090c'; ctx.fillRect(gx,GROUND-2,g.w,VH-GROUND+2);
-    ctx.fillStyle='rgba(70,95,105,.5)'; ctx.fillRect(gx,GROUND+44,g.w,3);
-    drawSprite(IMG.planks,gx+g.w/2,GROUND+6,44,false);
+    const gg=ctx.createLinearGradient(0,GROUND,0,VH);
+    gg.addColorStop(0,'#04070a'); gg.addColorStop(.55,'rgba(4,8,11,.88)'); gg.addColorStop(1,'rgba(4,8,11,.25)');
+    ctx.fillStyle=gg; ctx.fillRect(gx,GROUND-2,g.w,VH-GROUND+2);
+    ctx.fillStyle='rgba(120,150,160,.35)'; ctx.fillRect(gx,GROUND+52,g.w,2);
+    ctx.fillStyle='#14100c';
+    ctx.beginPath(); ctx.moveTo(gx-6,GROUND-2); ctx.lineTo(gx+34,GROUND-2); ctx.lineTo(gx+8,GROUND+13); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(gx+g.w+6,GROUND-2); ctx.lineTo(gx+g.w-30,GROUND-2); ctx.lineTo(gx+g.w-4,GROUND+15); ctx.closePath(); ctx.fill();
+    drawSprite(IMG.planks,gx+g.w/2,GROUND+4,40,false);
   }
   // crates (silhouette blocks on the play plane)
   for(const c of CRATES){
     const cx=c.x-camX; if(cx+c.w<-20||cx>VW+20) continue;
-    ctx.fillStyle='#0b0d0f'; ctx.fillRect(cx,c.y,c.w,c.h);
-    ctx.fillStyle='rgba(200,190,160,.14)'; ctx.fillRect(cx,c.y,c.w,3);
-    ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.strokeRect(cx+.5,c.y+.5,c.w-1,c.h-1);
+    ctx.fillStyle='#1c150e'; ctx.fillRect(cx,c.y,c.w,c.h);
+    ctx.fillStyle='rgba(255,214,150,.28)'; ctx.fillRect(cx,c.y,c.w,3);
+    ctx.strokeStyle='rgba(0,0,0,.65)'; ctx.strokeRect(cx+.5,c.y+.5,c.w-1,c.h-1);
+    ctx.beginPath(); ctx.moveTo(cx,c.y); ctx.lineTo(cx+c.w,c.y+c.h); ctx.moveTo(cx+c.w,c.y); ctx.lineTo(cx,c.y+c.h);
+    ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.stroke();
   }
+  // platforms: plank decks on posts; marble steps in the white world
+  for(const p of PLATFORMS){ const px=p.x-camX; if(px+p.w<-20||px>VW+20) continue;
+    if(p.m){ ctx.fillStyle='rgba(0,0,0,.16)'; ctx.fillRect(px+5,p.y+16,p.w,5);
+      ctx.fillStyle='#cdcdc4'; ctx.fillRect(px,p.y,p.w,12); ctx.fillStyle='rgba(0,0,0,.20)'; ctx.fillRect(px,p.y+9,p.w,3); }
+    else { ctx.strokeStyle='rgba(10,8,6,.8)'; ctx.lineWidth=5;
+      const posts=[]; for(let sx=px+16;sx<px+p.w-8;sx+=86) posts.push(sx);
+      for(let i=0;i<posts.length;i++){ ctx.fillStyle='#120e0a'; ctx.fillRect(posts[i],p.y+13,7,VH-p.y);
+        if(i<posts.length-1){ ctx.beginPath(); ctx.moveTo(posts[i]+3,p.y+16); ctx.lineTo(posts[i+1]+3,Math.min(VH-6,p.y+118));
+          ctx.moveTo(posts[i+1]+3,p.y+16); ctx.lineTo(posts[i]+3,Math.min(VH-6,p.y+118)); ctx.stroke(); } }
+      ctx.fillStyle='#1d160f'; ctx.fillRect(px,p.y,p.w,13);
+      ctx.fillStyle='rgba(255,214,150,.38)'; ctx.fillRect(px,p.y,p.w,3);
+      ctx.fillStyle='rgba(0,0,0,.4)'; for(let sx=px+24;sx<px+p.w-4;sx+=26) ctx.fillRect(sx,p.y+3,2,10); } }
   // tide hand
   if(tide.up) drawSprite(IMG.tide_wave,tide.x-camX,GROUND+8,168,false);
   // crabs
@@ -214,17 +239,17 @@ function render(){
   ctx.save();
   for(let i=0;i<3;i++){ const fy=250+i*90+Math.sin(tGlobal*0.11+i*2)*10;
     const grd=ctx.createLinearGradient(0,fy-46,0,fy+46);
-    grd.addColorStop(0,'rgba(226,232,236,0)'); grd.addColorStop(.5,'rgba(226,232,236,.10)'); grd.addColorStop(1,'rgba(226,232,236,0)');
+    grd.addColorStop(0,'rgba(226,232,236,0)'); grd.addColorStop(.5,'rgba(226,232,236,.055)'); grd.addColorStop(1,'rgba(226,232,236,0)');
     ctx.fillStyle=grd; ctx.fillRect(0,fy-46,VW,92); }
   ctx.restore();
   // grain
-  ctx.save(); ctx.globalAlpha=.055;
+  ctx.save(); ctx.globalAlpha=.038;
   const gx=(Math.random()*256)|0, gy=(Math.random()*256)|0;
   for(let x=-gx;x<VW;x+=256) for(let y=-gy;y<VH;y+=256) ctx.drawImage(grain,x,y);
   ctx.restore();
   // vignette
   { const v=ctx.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);
-    v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(0,0,0,.52)');
+    v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(0,0,0,.44)');
     ctx.fillStyle=v; ctx.fillRect(0,0,VW,VH); }
   // won: the white takes the screen
   if(won){ ctx.fillStyle='rgba(244,242,236,.96)'; ctx.fillRect(0,0,VW,VH);
